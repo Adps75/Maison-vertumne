@@ -35,6 +35,8 @@ Stripe, Cal.com, Vitest. Déploiement Vercel.
 - Facturation : jamais codée en interne, synchronisée avec un logiciel conforme via API.
 - Publicité : gérée dans Google Ads et Meta ; l'application remonte uniquement
   les conversions réelles.
+- Ne jamais lire, afficher ni modifier .env.local. Pour vérifier une configuration,
+  demander à l'utilisateur.
 
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.
