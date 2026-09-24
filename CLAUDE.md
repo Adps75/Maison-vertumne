@@ -18,6 +18,11 @@ Une seule application Next.js, une seule base Supabase, en route groups :
 - (estimation) : outil d'estimation
 - (admin) : pilotage, protégé par Supabase Auth
 
+Page d'accueil (/) = référencement naturel, indexable, localisée.
+Pages de vente (/p/[slug]) = une page par campagne publicitaire, noindex,
+sans navigation, un seul appel à l'action, assemblées à partir des composants
+de src/components/vente/. À construire au bloc 4.
+
 ## Stack
 Next.js App Router, TypeScript strict, Tailwind, Supabase (Postgres, Storage, Auth),
 Leaflet + Géoplateforme IGN, API Anthropic (vision), @react-pdf/renderer, Brevo,
