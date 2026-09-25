@@ -7,6 +7,7 @@ import { nombreEtapes } from "@/lib/types/estimation";
 import { EtapeTypeLieu } from "./EtapeTypeLieu";
 import { EtapeAdresse } from "./EtapeAdresse";
 import { EtapeCoordonnees } from "./EtapeCoordonnees";
+import { EtapePhotos } from "./EtapePhotos";
 
 const CLE_STORAGE = "adp_estimation";
 
@@ -125,14 +126,27 @@ export function ParcoursEstimation() {
           />
         )}
 
-        {/* Étape 4 — Placeholder photos */}
-        {etape === 4 && (
+        {/* Étape 4 — Photos */}
+        {etape === 4 && donnees.typeLieu && (
+          <EtapePhotos
+            typeLieu={donnees.typeLieu}
+            donnees={donnees}
+            onValider={(maj) => {
+              setDonnees((prev) => ({ ...prev, ...maj }));
+              setEtape(5);
+            }}
+            onRetour={() => setEtape(3)}
+          />
+        )}
+
+        {/* Étape 5 — Placeholder projet */}
+        {etape === 5 && (
           <div className="text-center py-20">
             <h2 className="font-serif font-medium text-2xl text-green-950">
-              Photos à venir
+              Votre projet, à venir
             </h2>
             <button
-              onClick={() => setEtape(3)}
+              onClick={() => setEtape(4)}
               className="mt-6 text-brass font-medium hover:text-brass-soft transition-colors"
             >
               &larr; Retour

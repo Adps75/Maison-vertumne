@@ -28,6 +28,19 @@ export interface ParcelleInfo {
   commune: string;
 }
 
+// --- Photos ---
+
+export interface PhotoEstimation {
+  id: string;
+  path: string;
+  ordre: number;
+  url?: string; // URL de lecture signée (temporaire)
+  lat?: number;
+  lon?: number;
+  orientation_degres?: number;
+  legende?: string;
+}
+
 // --- Données du parcours ---
 
 export interface DonneesEstimation {
@@ -50,10 +63,12 @@ export interface DonneesEstimation {
   telephone?: string;
   leadId?: string;
 
-  // Étape 4 — Photos (à venir)
+  // Étape 4 — Photos
+  photos?: PhotoEstimation[];
+
   // Étape 5 — Le projet (à venir)
 
-  // Étape 4 (appartement) — Données spécifiques
+  // Étape 5 (appartement) — Données spécifiques
   typeEspace?: TypeEspace;
   surfaceEspace?: number;
   etage?: number;
