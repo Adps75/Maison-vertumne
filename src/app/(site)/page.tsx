@@ -42,7 +42,7 @@ export default function PageAccueil() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "LandscapingBusiness",
-            name: "Maison Vertumne",
+            name: "Atelier des Prés",
             description: accueil.seo.description,
             areaServed: [
               {

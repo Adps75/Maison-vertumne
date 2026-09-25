@@ -5,7 +5,7 @@ export function Header() {
     <header className="sticky top-0 z-50 bg-paper/95 backdrop-blur-sm border-b border-hair-light">
       <div className="mx-auto w-full max-w-[1180px] px-[clamp(20px,6vw,120px)] flex items-center justify-between h-14">
         <Link href="/" className="font-serif font-medium text-[1.15rem] tracking-[0.04em] text-ink">
-          Maison Vertumne
+          Atelier <em className="italic text-brass">des Prés</em>
         </Link>
         <Link
           href="/estimation"

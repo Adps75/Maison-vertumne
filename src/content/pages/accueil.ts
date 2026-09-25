@@ -1,4 +1,4 @@
-// Contenu de la page d'accueil — Maison Vertumne
+// Contenu de la page d'accueil — Atelier des Prés
 // Ce fichier sera migré vers la table landing_pages.
 
 export interface ServiceBloc {
@@ -38,7 +38,7 @@ export interface FaqItem {
 
 export const accueil = {
   seo: {
-    titre: "Paysagiste au Plessis-Robinson et sud parisien | Maison Vertumne",
+    titre: "Paysagiste au Plessis-Robinson et sud parisien | Atelier des Prés",
     description:
       "Conception et aménagement de jardins, terrasses et espaces extérieurs en Île-de-France. Estimation gratuite en 3 minutes.",
   },
@@ -149,9 +149,9 @@ export const accueil = {
   },
 
   fondateur: {
-    titre: "Adrien Déprès, fondateur de Maison Vertumne",
+    titre: "Adrien Déprès, fondateur de Atelier des Prés",
     texte:
-      "Dix ans de métier, dont six à la tête de ma propre entreprise de paysage, deux en association, un an en Australie et un an au service d'autres entreprises du secteur. J'ai fondé Maison Vertumne pour mettre cette expérience et mon amour du végétal au service de mes clients, et de la végétalisation de nos villes, devenue essentielle face au réchauffement climatique.",
+      "Dix ans de métier, dont six à la tête de ma propre entreprise de paysage, deux en association, un an en Australie et un an au service d'autres entreprises du secteur. J'ai fondé Atelier des Prés pour mettre cette expérience et mon amour du végétal au service de mes clients, et de la végétalisation de nos villes, devenue essentielle face au réchauffement climatique.",
   },
 
   avis: {

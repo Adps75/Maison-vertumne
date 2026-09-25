@@ -1,9 +1,10 @@
-# Projet : Maison Vertumne, plateforme d'une entreprise de paysage (Île-de-France)
+# Projet : Atelier des Prés, plateforme d'une entreprise de paysage (Île-de-France)
 
 ## Activité
 Aménagement de jardins, terrasses et espaces extérieurs de A à Z, pour des maisons
 individuelles. Promesse : des jardins à l'esthétique soignée, faits pour durer,
 adaptés à leur sol et leur climat, livrés à la date promise.
+Le nom est toujours associé au métier : Atelier des Prés · Paysagiste.
 
 ## Parcours client
 Deux parcours d'estimation qui se rejoignent à partir des coordonnées :

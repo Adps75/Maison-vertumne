@@ -16,7 +16,7 @@ const archivo = Archivo({
 });
 
 export const metadata: Metadata = {
-  title: "Maison Vertumne — Paysagistes, Paris",
+  title: "Atelier des Prés — Paysagiste",
   description: "Aménagement de jardins, terrasses et espaces extérieurs en Île-de-France.",
 };
 
