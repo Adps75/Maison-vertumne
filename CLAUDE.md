@@ -49,6 +49,15 @@ Stripe, Cal.com, Vitest. Déploiement Vercel.
 - Ne jamais lire, afficher ni modifier .env.local. Pour vérifier une configuration,
   demander à l'utilisateur.
 
+## Pistes cartographiques
+- Image aérienne envoyée à l'IA : utiliser la couche la plus récente disponible
+  (vérifier la date de ORTHOIMAGERY.ORTHOPHOTOS sur la zone vs Ortho-Express 2024).
+- Envoyer aussi l'image infrarouge (ORTHOIMAGERY.ORTHOPHOTOS.IRC) à l'IA pour
+  évaluer l'état de la végétation.
+- THR.ORTHOIMAGERY.ORTHOPHOTOS (5 cm, zoom 21) couvre Paris intra-muros : à
+  utiliser plus tard pour les projets d'appartement à Paris, avec repli sur la
+  couche standard.
+
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.
 - Une phase = une branche git + un commit final.
