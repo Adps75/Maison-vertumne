@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { extraireUtm } from "@/lib/utm";
 
-const COOKIE_NAME = "mv_utm";
+const COOKIE_NAME = "adp_utm";
 const COOKIE_MAX_AGE = 90 * 24 * 60 * 60; // 90 jours en secondes
 
 export function middleware(request: NextRequest) {

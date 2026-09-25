@@ -1,30 +1,77 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import type { DonneesEstimation, TypeLieu } from "@/lib/types/estimation";
 import { nombreEtapes } from "@/lib/types/estimation";
 import { EtapeTypeLieu } from "./EtapeTypeLieu";
 import { EtapeAdresse } from "./EtapeAdresse";
+import { EtapeCoordonnees } from "./EtapeCoordonnees";
+
+const CLE_STORAGE = "adp_estimation";
+
+function chargerSession(): { etape: number; donnees: DonneesEstimation } | null {
+  try {
+    const raw = sessionStorage.getItem(CLE_STORAGE);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function sauverSession(etape: number, donnees: DonneesEstimation) {
+  try {
+    sessionStorage.setItem(CLE_STORAGE, JSON.stringify({ etape, donnees }));
+  } catch {
+    // sessionStorage indisponible (navigation privée, quota)
+  }
+}
 
 export function ParcoursEstimation() {
+  const [initialise, setInitialise] = useState(false);
   const [etape, setEtape] = useState(1);
   const [donnees, setDonnees] = useState<DonneesEstimation>({});
+
+  // Restauration depuis sessionStorage au premier rendu
+  useEffect(() => {
+    const sauvegarde = chargerSession();
+    if (sauvegarde) {
+      setEtape(sauvegarde.etape);
+      setDonnees(sauvegarde.donnees);
+    }
+    setInitialise(true);
+  }, []);
+
+  // Sauvegarde à chaque changement
+  useEffect(() => {
+    if (initialise) {
+      sauverSession(etape, donnees);
+    }
+  }, [etape, donnees, initialise]);
 
   const total = nombreEtapes(donnees.typeLieu);
 
   const choisirTypeLieu = useCallback(
     (type: TypeLieu) => {
       if (type !== donnees.typeLieu) {
-        // Réinitialise les données d'adresse, parcelle et carte
-        setDonnees({
-          typeLieu: type,
-        });
+        setDonnees({ typeLieu: type });
       }
       setEtape(2);
     },
     [donnees.typeLieu],
   );
+
+  // Attendre la restauration avant d'afficher
+  if (!initialise) {
+    return (
+      <main className="flex-1 bg-paper">
+        <div className="mx-auto w-full max-w-[1180px] px-[clamp(20px,6vw,120px)] py-10">
+          <div className="h-1 bg-paper-2 rounded-full" />
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="flex-1 bg-paper">
@@ -66,14 +113,26 @@ export function ParcoursEstimation() {
           />
         )}
 
-        {/* Étape 3+ — Placeholder */}
+        {/* Étape 3 — Coordonnées */}
         {etape === 3 && (
+          <EtapeCoordonnees
+            donnees={donnees}
+            onValider={(maj) => {
+              setDonnees((prev) => ({ ...prev, ...maj }));
+              setEtape(4);
+            }}
+            onRetour={() => setEtape(2)}
+          />
+        )}
+
+        {/* Étape 4 — Placeholder photos */}
+        {etape === 4 && (
           <div className="text-center py-20">
             <h2 className="font-serif font-medium text-2xl text-green-950">
-              Étape 3 à venir
+              Photos à venir
             </h2>
             <button
-              onClick={() => setEtape(2)}
+              onClick={() => setEtape(3)}
               className="mt-6 text-brass font-medium hover:text-brass-soft transition-colors"
             >
               &larr; Retour

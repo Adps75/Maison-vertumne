@@ -44,8 +44,14 @@ export interface DonneesEstimation {
   parcelle?: ParcelleInfo;
   surfaceParcelle?: number;
 
-  // Étape 3 — Photos (à venir)
-  // Étape 4 — Le projet (à venir)
+  // Étape 3 — Coordonnées
+  prenom?: string;
+  email?: string;
+  telephone?: string;
+  leadId?: string;
+
+  // Étape 4 — Photos (à venir)
+  // Étape 5 — Le projet (à venir)
 
   // Étape 4 (appartement) — Données spécifiques
   typeEspace?: TypeEspace;
@@ -55,8 +61,7 @@ export interface DonneesEstimation {
   orientationEspace?: OrientationEspace;
   accordCopro?: AccordCopro;
 
-  // Étape 5 — Budget et urgence (à venir)
-  // Étape 6 — Coordonnées (à venir)
+  // Étape 6 — Budget et urgence (à venir)
   // Étape 7 — Estimation (à venir)
   // Étape 8 — Récapitulatif (à venir)
 }
