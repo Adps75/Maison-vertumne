@@ -6,9 +6,14 @@ individuelles. Promesse : des jardins à l'esthétique soignée, faits pour dure
 adaptés à leur sol et leur climat, livrés à la date promise.
 
 ## Parcours client
-Page de vente → estimation en ligne (adresse, parcelle cadastrale, photos positionnées,
-description, qualification) → fourchette budgétaire automatique + pré-diagnostic IA
-en PDF → tri des leads (A/B/C/D) → rappel ou diagnostic payant (190 €)
+Deux parcours d'estimation qui se rejoignent à partir des coordonnées :
+- Parcours maison : adresse → parcelle cadastrale → photos positionnées sur le plan
+  → description → qualification → fourchette budgétaire + pré-diagnostic IA en PDF.
+- Parcours appartement : adresse (sans parcelle ni photos positionnées) → photos
+  avec légende → description (type d'espace, surface, étage, accès, orientation,
+  accord copro) → qualification → fourchette budgétaire (avec coefficient
+  logistique : étage, accès) + pré-diagnostic IA en PDF.
+Ensuite : tri des leads (A/B/C/D) → rappel ou diagnostic payant (190 €)
 → conception (900 à 2 500 €, déductible) → réalisation sur devis.
 
 ## Architecture
