@@ -66,17 +66,23 @@ export interface DonneesEstimation {
   // Étape 4 — Photos
   photos?: PhotoEstimation[];
 
-  // Étape 5 — Le projet (à venir)
+  // Étape 5 — Votre projet
+  typesAmenagement?: string[];
+  trancheSurface?: string;
+  description?: string;
 
   // Étape 5 (appartement) — Données spécifiques
   typeEspace?: TypeEspace;
-  surfaceEspace?: number;
   etage?: number;
   acces?: TypeAcces;
   orientationEspace?: OrientationEspace;
   accordCopro?: AccordCopro;
 
-  // Étape 6 — Budget et urgence (à venir)
+  // Étape 6 — Précisions
+  budgetDeclare?: string;
+  urgence?: string;
+  proprietaire?: boolean;
+
   // Étape 7 — Estimation (à venir)
   // Étape 8 — Récapitulatif (à venir)
 }

@@ -8,6 +8,8 @@ import { EtapeTypeLieu } from "./EtapeTypeLieu";
 import { EtapeAdresse } from "./EtapeAdresse";
 import { EtapeCoordonnees } from "./EtapeCoordonnees";
 import { EtapePhotos } from "./EtapePhotos";
+import { EtapeProjet } from "./EtapeProjet";
+import { EtapePrecisions } from "./EtapePrecisions";
 
 const CLE_STORAGE = "adp_estimation";
 
@@ -139,14 +141,39 @@ export function ParcoursEstimation() {
           />
         )}
 
-        {/* Étape 5 — Placeholder projet */}
-        {etape === 5 && (
+        {/* Étape 5 — Votre projet */}
+        {etape === 5 && donnees.typeLieu && (
+          <EtapeProjet
+            typeLieu={donnees.typeLieu}
+            donnees={donnees}
+            onValider={(maj) => {
+              setDonnees((prev) => ({ ...prev, ...maj }));
+              setEtape(6);
+            }}
+            onRetour={() => setEtape(4)}
+          />
+        )}
+
+        {/* Étape 6 — Précisions */}
+        {etape === 6 && (
+          <EtapePrecisions
+            donnees={donnees}
+            onValider={(maj) => {
+              setDonnees((prev) => ({ ...prev, ...maj }));
+              setEtape(7);
+            }}
+            onRetour={() => setEtape(5)}
+          />
+        )}
+
+        {/* Étape 7 — Placeholder estimation */}
+        {etape === 7 && (
           <div className="text-center py-20">
             <h2 className="font-serif font-medium text-2xl text-green-950">
-              Votre projet, à venir
+              Votre estimation, à venir
             </h2>
             <button
-              onClick={() => setEtape(4)}
+              onClick={() => setEtape(6)}
               className="mt-6 text-brass font-medium hover:text-brass-soft transition-colors"
             >
               &larr; Retour

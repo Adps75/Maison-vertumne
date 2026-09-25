@@ -29,7 +29,8 @@ export const schemaLeadPatch = z
     accord_copro: z.enum(["obtenu", "a_demander", "non_necessaire", "ne_sait_pas"]).optional(),
 
     types_amenagement: z.array(z.string()).optional(),
-    surface_projet: z.number().optional(),
+    surface_projet: z.number().nullable().optional(),
+    tranche_surface: z.string().optional(),
     description: z.string().optional(),
     budget_declare: z.enum(["moins_5k", "5k_15k", "15k_40k", "plus_40k", "ne_sait_pas"]).optional(),
     urgence: z.enum(["moins_3_mois", "3_6_mois", "6_12_mois", "plus_12_mois"]).optional(),
