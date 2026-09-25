@@ -40,6 +40,8 @@ Stripe, Cal.com, Vitest. Déploiement Vercel.
 - Le modèle Anthropic est lu depuis la variable ANTHROPIC_MODEL.
 - Logique métier (prix, score) dans des fonctions pures, testées avec Vitest.
 - Réponses de l'IA validées avec Zod avant enregistrement.
+- L'IA observe et signale ; le score et la catégorie sont calculés par des règles
+  fixes, jamais par l'IA.
 - RGPD : consentement explicite, données minimales, durée de conservation définie.
 - Chaque lead garde sa source (utm_source, utm_medium, utm_campaign, utm_content,
   page d'arrivée).

@@ -1,5 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { authentifierLead } from "@/lib/auth-lead";
+import { lancerAnalyse } from "@/lib/analyse";
+
+export const maxDuration = 120;
 import { calculerFourchette } from "@/lib/estimation";
 import {
   schemaTarif,
@@ -111,6 +114,9 @@ export async function POST() {
   if (updateErr) {
     return NextResponse.json({ ok: false, error: updateErr.message }, { status: 500 });
   }
+
+  // Lancer l'analyse IA en arrière-plan
+  after(() => lancerAnalyse(leadId));
 
   return NextResponse.json({ ok: true, ...resultat });
 }
