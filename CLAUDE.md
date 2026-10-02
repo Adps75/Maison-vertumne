@@ -81,3 +81,5 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
   → planning → agents IA.
 - L'utilisateur travaille sur un Mac Intel, uniquement dans le terminal : donner des
   commandes simples, une à la fois, et expliquer ce qu'elles font.
+- Avant chaque proposition de commit : lancer npm test (Vitest) et npm run test:e2e
+  (Playwright). Ne pas commiter si un test échoue.

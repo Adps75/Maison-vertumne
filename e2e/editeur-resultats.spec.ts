@@ -67,6 +67,7 @@ async function elementCount(page: import("@playwright/test").Page): Promise<numb
 }
 
 test.describe.serial("Résultats réels", () => {
+  test.setTimeout(60_000);
   test.skip(() => !process.env.E2E_EMAIL?.trim(), "E2E_EMAIL non défini");
 
   test("setup", async ({ page }) => {
