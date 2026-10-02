@@ -67,6 +67,9 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
 - Librairies lourdes (Konva, Three.js, OpenCV.js) en import dynamique uniquement
   dans le module ; aucune dépendance au site public, pour pouvoir le détacher.
 - Toutes les coordonnées de travail en Lambert 93 (EPSG:2154), en mètres.
+- Chaque projet a une origine locale (coin sud-ouest de l'emprise, arrondi au mètre).
+  Toutes les géométries du module sont stockées en mètres relatifs à cette origine.
+  Les coordonnées Lambert 93 absolues ne servent qu'aux échanges avec l'IGN.
 - Accès réservé aux administrateurs connectés (Supabase Auth + table admins).
 - Chaque route API et server action du module appelle exigerAdmin()
   (src/lib/auth/admin.ts) en première ligne.

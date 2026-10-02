@@ -2,6 +2,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Vérifie que l'utilisateur courant est un administrateur (présent dans la table admins).
@@ -23,7 +24,9 @@ export async function exigerAdmin(mode: "page" | "api" = "page") {
     throw new ErreurNonAutorise("Non authentifié.");
   }
 
-  const { data: admin } = await supabase
+  // Client admin (service_role) pour lire la table admins protégée par RLS
+  const adminClient = createAdminClient();
+  const { data: admin, error: adminError } = await adminClient
     .from("admins")
     .select("id")
     .eq("user_id", user.id)
@@ -34,7 +37,7 @@ export async function exigerAdmin(mode: "page" | "api" = "page") {
     throw new ErreurNonAutorise("Accès réservé aux administrateurs.");
   }
 
-  return { supabase, userId: user.id };
+  return { supabase: adminClient, userId: user.id };
 }
 
 export class ErreurNonAutorise extends Error {
