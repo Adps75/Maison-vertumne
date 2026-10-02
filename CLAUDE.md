@@ -60,6 +60,17 @@ Stripe, Cal.com, Vitest. Déploiement Vercel.
   utiliser plus tard pour les projets d'appartement à Paris, avec repli sur la
   couche standard.
 
+## Module conception
+Outil interne de conception paysagère. Cadrage complet : docs/module-conception.md.
+- Code dans src/modules/conception et routes dans src/app/(app)/conception.
+- Tables préfixées conception_ dans la base Supabase partagée.
+- Librairies lourdes (Konva, Three.js, OpenCV.js) en import dynamique uniquement
+  dans le module ; aucune dépendance au site public, pour pouvoir le détacher.
+- Toutes les coordonnées de travail en Lambert 93 (EPSG:2154), en mètres.
+- Accès réservé aux administrateurs connectés (Supabase Auth + table admins).
+- Chaque route API et server action du module appelle exigerAdmin()
+  (src/lib/auth/admin.ts) en première ligne.
+
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.
 - Une phase = une branche git + un commit final.
