@@ -11,6 +11,7 @@ import { EtapePhotos } from "./EtapePhotos";
 import { EtapeProjet } from "./EtapeProjet";
 import { EtapePrecisions } from "./EtapePrecisions";
 import { EtapeEstimation } from "./EtapeEstimation";
+import { EtapePrediagnostic } from "./EtapePrediagnostic";
 
 const CLE_STORAGE = "adp_estimation";
 
@@ -297,19 +298,9 @@ export function ParcoursEstimation() {
           />
         )}
 
-        {/* Étape 8 — Placeholder pré-diagnostic */}
+        {/* Étape 8 — Pré-diagnostic */}
         {etape === 8 && (
-          <div className="text-center py-20">
-            <h2 className="font-serif font-medium text-2xl text-green-950">
-              Pré-diagnostic et réservation du diagnostic, à venir
-            </h2>
-            <button
-              onClick={() => setEtape(7)}
-              className="mt-6 text-brass font-medium hover:text-brass-soft transition-colors"
-            >
-              &larr; Retour
-            </button>
-          </div>
+          <EtapePrediagnostic donnees={donnees} />
         )}
       </div>
     </main>

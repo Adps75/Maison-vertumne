@@ -10,7 +10,12 @@ import {
   construireOutilAnalyse,
 } from "./analyse-prompt";
 import { preparerImagesAeriennes, lirePhotosClient } from "./analyse-images";
-import { calculerScore } from "./score";
+import { calculerScore, type ResultatScore } from "./score";
+import { genererPdfPrediagnostic } from "./pdf/prediagnostic";
+import { genererLienDiagnostic } from "./lien-signe";
+import { envoyerEmail } from "./email/envoyer";
+import { emailClient, emailRepli, emailAdmin } from "./email/templates";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const TIMEOUT_EN_COURS_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RETRIES_API = 2;
@@ -111,9 +116,27 @@ export async function lancerAnalyse(leadId: string): Promise<void> {
         categorie: score.categorie,
       })
       .eq("id", leadId);
+
+    // Générer le PDF et envoyer les emails (un échec ici ne change pas le statut de l'analyse)
+    try {
+      await envoyerPrediagnostic(supabase, leadId, lead, resultat.analyse, score);
+    } catch (emailErr) {
+      console.error("[analyse] Erreur envoi pré-diagnostic:", emailErr);
+      await supabase
+        .from("leads")
+        .update({ prediagnostic_erreur: emailErr instanceof Error ? emailErr.message : "Erreur inconnue" })
+        .eq("id", leadId);
+    }
   } catch (e) {
     const message = e instanceof Error ? e.message : "Erreur inconnue";
     console.error("[analyse] Erreur finale:", message);
+
+    // Email de repli (fourchette seule)
+    try {
+      await envoyerEmailRepli(supabase, leadId, lead);
+    } catch (repliErr) {
+      console.error("[analyse] Erreur email de repli:", repliErr);
+    }
 
     await supabase
       .from("leads")
@@ -313,4 +336,131 @@ async function executerAnalyse(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ===================== ENVOI PRÉ-DIAGNOSTIC =====================
+
+const BASE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://atelierdespres.fr";
+
+async function envoyerPrediagnostic(
+  supabase: SupabaseClient,
+  leadId: string,
+  lead: Record<string, unknown>,
+  analyse: AnalyseIA,
+  score: ResultatScore,
+): Promise<void> {
+  const lienDiagnostic = genererLienDiagnostic(leadId, BASE_URL);
+
+  // Signed URLs pour les photos (pour le PDF)
+  const { data: photosDb } = await supabase
+    .from("photos")
+    .select("ordre, path")
+    .eq("lead_id", leadId)
+    .order("ordre");
+
+  const photosUrls: { ordre: number; url: string }[] = [];
+  for (const p of photosDb ?? []) {
+    const { data } = await supabase.storage
+      .from("photos-jardins")
+      .createSignedUrl(p.path, 3600);
+    if (data?.signedUrl) {
+      photosUrls.push({ ordre: p.ordre, url: data.signedUrl });
+    }
+  }
+
+  // URL de l'image aérienne annotée
+  let aerienneUrl: string | undefined;
+  const aeriennePath = `leads/${leadId}/aerienne-annotee.jpg`;
+  const { data: aerienneData } = await supabase.storage
+    .from("documents-leads")
+    .createSignedUrl(aeriennePath, 3600);
+  if (aerienneData?.signedUrl) aerienneUrl = aerienneData.signedUrl;
+
+  // Générer le PDF
+  const pdfBuffer = await genererPdfPrediagnostic({
+    prenom: (lead.prenom as string) ?? "",
+    date: new Date().toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }),
+    observations: analyse.observations,
+    fourchette_min: (lead.fourchette_min as number) ?? 0,
+    fourchette_max: (lead.fourchette_max as number) ?? 0,
+    aerienneUrl,
+    photosUrls,
+    lienDiagnostic,
+  });
+
+  // Stocker le PDF dans Storage
+  const pdfPath = `leads/${leadId}/prediagnostic.pdf`;
+  await supabase.storage
+    .from("documents-leads")
+    .upload(pdfPath, pdfBuffer, { contentType: "application/pdf", upsert: true });
+
+  await supabase
+    .from("leads")
+    .update({ prediagnostic_path: pdfPath })
+    .eq("id", leadId);
+
+  // Email client
+  const emailClientData = emailClient((lead.prenom as string) ?? "", lienDiagnostic);
+  await envoyerEmail({
+    supabase,
+    leadId,
+    type: "client_prediagnostic",
+    destinataire: (lead.email as string) ?? "",
+    objet: emailClientData.objet,
+    html: emailClientData.html,
+    pieceJointe: { nom: "prediagnostic.pdf", contenuBase64: pdfBuffer.toString("base64") },
+    pathPieceJointe: pdfPath,
+  });
+
+  // Email admin
+  const adminEmail = process.env.EMAIL_ADMIN;
+  if (adminEmail) {
+    const scoreDetail = score.detail as Record<string, number>;
+    const emailAdminData = emailAdmin({
+      prenom: (lead.prenom as string) ?? "",
+      commune: (lead.adresse_label as string)?.split(",").pop()?.trim() ?? "",
+      fourchette: `${(lead.fourchette_min as number)?.toLocaleString("fr-FR") ?? "?"} – ${(lead.fourchette_max as number)?.toLocaleString("fr-FR") ?? "?"} €`,
+      categorie: score.categorie,
+      scoreTotal: score.total,
+      scoreDetail,
+      synthese: analyse.observations.synthese_demande,
+      pointsVigilance: analyse.fiche_interne.points_vigilance,
+      questionsAppel: analyse.fiche_interne.questions_appel,
+      email: (lead.email as string) ?? "",
+      telephone: (lead.telephone as string) ?? "",
+      lienFiche: `${BASE_URL}/dev/leads/${leadId}`,
+    });
+
+    await envoyerEmail({
+      supabase,
+      leadId,
+      type: "admin_nouveau_lead",
+      destinataire: adminEmail,
+      objet: emailAdminData.objet,
+      html: emailAdminData.html,
+    });
+  }
+}
+
+async function envoyerEmailRepli(
+  supabase: SupabaseClient,
+  leadId: string,
+  lead: Record<string, unknown>,
+): Promise<void> {
+  const lienDiagnostic = genererLienDiagnostic(leadId, BASE_URL);
+  const data = emailRepli(
+    (lead.prenom as string) ?? "",
+    (lead.fourchette_min as number) ?? 0,
+    (lead.fourchette_max as number) ?? 0,
+    lienDiagnostic,
+  );
+
+  await envoyerEmail({
+    supabase,
+    leadId,
+    type: "client_repli",
+    destinataire: (lead.email as string) ?? "",
+    objet: data.objet,
+    html: data.html,
+  });
 }
