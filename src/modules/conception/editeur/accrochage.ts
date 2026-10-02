@@ -40,6 +40,8 @@ function pointsDe(geom: Geometrie): Pt[] {
         geom.centre[0], geom.centre[1], geom.rayon,
         geom.angleDebut, geom.angleFin, 32,
       );
+    case "cote":
+      return [geom.p1, geom.p2];
     case "point":
       return [geom.position];
   }
@@ -59,6 +61,8 @@ function extremitesDe(geom: Geometrie): Pt[] {
         geom.centre[0], geom.centre[1], geom.rayon,
         geom.angleDebut, geom.angleFin, 32,
       ).filter((_, i, arr) => i === 0 || i === arr.length - 1);
+    case "cote":
+      return [geom.p1, geom.p2];
     case "point":
       return [geom.position];
   }

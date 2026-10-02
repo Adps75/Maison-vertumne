@@ -42,7 +42,7 @@ export const CALQUES_DEFAUT: Calque[] = [
   { nom: "sols", visible: true, verrouille: false, couleur: "#E07830" },         // Orange
   { nom: "mineral", visible: true, verrouille: false, couleur: "#50B8E0" },      // Bleu clair
   { nom: "vegetal", visible: true, verrouille: false, couleur: "#40D870" },       // Vert vif
-  { nom: "cotes", visible: true, verrouille: false, couleur: "#FFFFFF" },         // Blanc
+  { nom: "cotes", visible: true, verrouille: false, couleur: "#FF4040" },         // Rouge vif
   { nom: "annotations", visible: true, verrouille: false, couleur: "#F0C040" },   // Or
 ];
 
@@ -56,7 +56,7 @@ export function etatInitial(): EtatEditeur {
     modeOrtho: false,
     calques: [...CALQUES_DEFAUT],
     calqueActif: "vegetal",
-    opaciteOrtho: 1,
+    opaciteOrtho: 0.7,
     saisie: "",
     messageCommande: "Prêt",
   };

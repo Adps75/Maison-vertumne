@@ -26,11 +26,14 @@ import { ecranVersTerrain } from "@/modules/conception/geo/canevas";
 import { trouverAccrochage, contrainteOrtho } from "@/modules/conception/editeur/accrochage";
 import type { Element, Geometrie, NomOutil, Accrochage as AccrochageType } from "@/modules/conception/types";
 import { deplacerGeometrie, copierGeometrie, rotationGeometrie, miroirGeometrie } from "@/modules/conception/editeur/transformation";
-import { dist as distPt, pointDansPolygone } from "@/modules/conception/geo/plan";
+import { dist as distPt } from "@/modules/conception/geo/plan";
 import type { Pt } from "@/modules/conception/geo/plan";
+import { hitTestGeometrique, elementSurvole, selectionParRectangle } from "@/modules/conception/editeur/selection";
 import {
   appliquerDeplacementPoignee,
   supprimerSommet,
+  extrairePoignees,
+  trouverPoignee,
   type Poignee,
 } from "@/modules/conception/editeur/poignees";
 
@@ -68,6 +71,7 @@ export function PageProjetClient() {
   const curseurRef = useRef<Pt>([0, 0]);
   const accrochageRef = useRef<AccrochageType | null>(null);
   const zoomRef = useRef(1);
+  const saisieRef = useRef("");
 
   // État des outils d'édition (point de base, axe miroir)
   const [editBase, setEditBase] = useState<Pt | null>(null);
@@ -81,6 +85,13 @@ export function PageProjetClient() {
   // Poignées
   const [poigneeActive, setPoigneeActive] = useState<Poignee | null>(null);
   const [sommetSelectionne, setSommetSelectionne] = useState<{ elementId: string; index: number } | null>(null);
+  const survoleRef = useRef<string | null>(null);
+  const poigneeSurvoleRef = useRef<Poignee | null>(null);
+  const poigneePreviewRef = useRef<Pt | null>(null); // Position actuelle de la poignée glissée
+
+  // Phase des outils d'édition (AutoCAD)
+  type PhaseEdition = "selection" | "base" | "destination";
+  const [phaseEdition, setPhaseEdition] = useState<PhaseEdition>("selection");
 
   // Track Shift key
   useEffect(() => {
@@ -130,6 +141,26 @@ export function PageProjetClient() {
       .catch(() => setErreur("Impossible de charger le projet."))
       .finally(() => setChargement(false));
   }, [id]);
+
+  // Garder saisieRef en sync
+  useEffect(() => { saisieRef.current = etat.saisie; }, [etat.saisie]);
+
+  // Quand l'outil change, initialiser la phase d'édition
+  useEffect(() => {
+    if (["deplacer", "copier", "rotation", "miroir"].includes(etat.outil)) {
+      if (etat.selection.size > 0) {
+        setPhaseEdition("base");
+      } else {
+        setPhaseEdition("selection");
+      }
+      setEditBase(null);
+      setEditAxeA(null);
+    } else {
+      setPhaseEdition("selection");
+    }
+    // Toujours nettoyer le rectangle de sélection au changement d'outil
+    setRectDebut(null);
+  }, [etat.outil]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Planifier la sauvegarde après chaque action qui modifie les éléments
   useEffect(() => {
@@ -184,8 +215,29 @@ export function PageProjetClient() {
       }
 
       curseurRef.current = pt;
+
+      // Pendant un glissement de poignée → mettre à jour la preview
+      if (poigneeActive) {
+        poigneePreviewRef.current = pt;
+      } else if (etat.outil === "selection" && !rectDebut) {
+        // Détection du survol de poignée (prioritaire sur l'élément)
+        const selectedEls = Array.from(etat.selection)
+          .map((sid) => etat.elements.get(sid))
+          .filter(Boolean) as Element[];
+        const toutesPoignees = selectedEls.flatMap((el) => extrairePoignees(el));
+        const pSurvol = trouverPoignee(pt, toutesPoignees, 8, zoomRef.current);
+        poigneeSurvoleRef.current = pSurvol;
+
+        // Survol d'élément (seulement si pas sur une poignée)
+        if (!pSurvol) {
+          const elements = Array.from(etat.elements.values());
+          survoleRef.current = elementSurvole(pt, elements, etat.calques, zoomRef.current);
+        } else {
+          survoleRef.current = null;
+        }
+      }
     },
-    [etat.accrochageActif, etat.modeOrtho, etat.traceEnCours, etat.elements, parcellePoints, batimentsPoints],
+    [etat.accrochageActif, etat.modeOrtho, etat.traceEnCours, etat.elements, etat.calques, etat.outil, parcellePoints, batimentsPoints, rectDebut, poigneeActive],
   );
 
   // Clic sur le canevas
@@ -280,12 +332,29 @@ export function PageProjetClient() {
 
         case "cote":
           dispatch({ type: "AJOUTER_POINT", point: pt });
-          if (etat.traceEnCours.length === 1) {
+          if (etat.traceEnCours.length === 2) {
+            // 3ème clic : position du décalage
             const p1 = etat.traceEnCours[0];
+            const p2 = etat.traceEnCours[1];
+            const distance = distPt(p1, p2);
+            // Décalage = distance perpendiculaire du 3ème clic au segment p1-p2
+            const dx = p2[0] - p1[0];
+            const dy = p2[1] - p1[1];
+            const len = Math.sqrt(dx * dx + dy * dy);
+            const nx = len > 0 ? -dy / len : 0;
+            const ny = len > 0 ? dx / len : 1;
+            const decalage = (pt[0] - p1[0]) * nx + (pt[1] - p1[1]) * ny;
+
             const element: Element = {
               id: genererIdLocal(),
               type: "cote",
-              geometrie: { type: "polyligne", points: [p1, pt] },
+              geometrie: {
+                type: "cote",
+                p1,
+                p2,
+                decalage,
+                distance: Math.round(distance * 100) / 100,
+              },
               calque: "cotes",
               statut: "nouveau",
               hauteur: null,
@@ -317,13 +386,27 @@ export function PageProjetClient() {
         }
 
         case "selection": {
+          // 1. Priorité aux poignées
+          const selectedEls = Array.from(etat.selection)
+            .map((sid) => etat.elements.get(sid))
+            .filter(Boolean) as Element[];
+          const toutesPoignees = selectedEls.flatMap((el) => extrairePoignees(el));
+          const poignee = trouverPoignee(pt, toutesPoignees, 8, zoomRef.current);
+
+          if (poignee) {
+            setPoigneeActive(poignee);
+            setSommetSelectionne({ elementId: poignee.elementId, index: poignee.index });
+            poigneePreviewRef.current = pt;
+            break;
+          }
+
+          // 2. Sélection d'élément
           const elements = Array.from(etat.elements.values());
-          const touche = hitTest(pt, elements);
+          const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
           if (touche) {
             dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
           } else {
             dispatch({ type: "DESELECTIONNER" });
-            // Début de sélection rectangle
             setRectDebut(pt);
           }
           break;
@@ -331,10 +414,21 @@ export function PageProjetClient() {
 
         case "deplacer":
         case "copier":
-          if (etat.selection.size === 0) break;
-          if (!editBase) {
+          if (phaseEdition === "selection") {
+            // Sélection par clic pendant la phase sélection
+            const elements = Array.from(etat.elements.values());
+            const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
+            if (touche) dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
+            break;
+          }
+          if (phaseEdition === "base") {
             setEditBase(pt);
-          } else {
+            setPhaseEdition("destination");
+            dispatch({ type: "SAISIE", texte: "" });
+            dispatch({ type: "CHANGER_OUTIL", outil: etat.outil, message: "Point de destination (ou longueur au clavier)" });
+            break;
+          }
+          if (phaseEdition === "destination" && editBase) {
             const dx = pt[0] - editBase[0];
             const dy = pt[1] - editBase[1];
             const modifies = Array.from(etat.selection)
@@ -349,7 +443,11 @@ export function PageProjetClient() {
                   geometrie: deplacerGeometrie(el.geometrie, dx, dy),
                 })),
               });
+              setEditBase(null);
+              setPhaseEdition("selection");
+              dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
             } else {
+              // Copier : créer les copies, rester actif pour plusieurs copies
               modifies.forEach((el) => {
                 dispatch({
                   type: "CREER_ELEMENT",
@@ -360,40 +458,59 @@ export function PageProjetClient() {
                   },
                 });
               });
+              // Rester en phase destination pour une autre copie
             }
-            setEditBase(null);
-            dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
           }
           break;
 
         case "rotation":
-          if (etat.selection.size === 0) break;
-          if (!editBase) {
+          if (phaseEdition === "selection") {
+            const elements = Array.from(etat.elements.values());
+            const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
+            if (touche) dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
+            break;
+          }
+          if (phaseEdition === "base") {
             setEditBase(pt);
-          } else {
-            const angle = parseFloat(prompt("Angle de rotation (degrés) :") ?? "");
-            if (!isNaN(angle)) {
-              const modifies = Array.from(etat.selection)
-                .map((sid) => etat.elements.get(sid))
-                .filter(Boolean) as Element[];
-              dispatch({
-                type: "MODIFIER_ELEMENTS",
-                elements: modifies.map((el) => ({
-                  ...el,
-                  geometrie: rotationGeometrie(el.geometrie, editBase, angle),
-                })),
-              });
-            }
+            setPhaseEdition("destination");
+            dispatch({ type: "SAISIE", texte: "" });
+            dispatch({ type: "CHANGER_OUTIL", outil: "rotation", message: "Angle de rotation (clic ou saisir en degrés)" });
+            break;
+          }
+          if (phaseEdition === "destination" && editBase) {
+            // Angle par clic : angle entre base et pt
+            const angle = (Math.atan2(pt[1] - editBase[1], pt[0] - editBase[0]) * 180) / Math.PI;
+            const modifies = Array.from(etat.selection)
+              .map((sid) => etat.elements.get(sid))
+              .filter(Boolean) as Element[];
+            dispatch({
+              type: "MODIFIER_ELEMENTS",
+              elements: modifies.map((el) => ({
+                ...el,
+                geometrie: rotationGeometrie(el.geometrie, editBase, angle),
+              })),
+            });
             setEditBase(null);
+            setPhaseEdition("selection");
             dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
           }
           break;
 
         case "miroir":
-          if (etat.selection.size === 0) break;
-          if (!editAxeA) {
+          if (phaseEdition === "selection") {
+            const elements = Array.from(etat.elements.values());
+            const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
+            if (touche) dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
+            break;
+          }
+          if (phaseEdition === "base") {
             setEditAxeA(pt);
-          } else {
+            setPhaseEdition("destination");
+            dispatch({ type: "SAISIE", texte: "" });
+            dispatch({ type: "CHANGER_OUTIL", outil: "miroir", message: "Deuxième point de l'axe" });
+            break;
+          }
+          if (phaseEdition === "destination" && editAxeA) {
             const modifies = Array.from(etat.selection)
               .map((sid) => etat.elements.get(sid))
               .filter(Boolean) as Element[];
@@ -405,6 +522,7 @@ export function PageProjetClient() {
               })),
             });
             setEditAxeA(null);
+            setPhaseEdition("selection");
             dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
           }
           break;
@@ -420,30 +538,7 @@ export function PageProjetClient() {
     [etat.outil, etat.traceEnCours, etat.calqueActif, etat.elements, etat.selection, editBase, editAxeA],
   );
 
-  // Début de glissement de poignée
-  const onPoigneeDebut = useCallback((poignee: Poignee) => {
-    setPoigneeActive(poignee);
-    setSommetSelectionne({ elementId: poignee.elementId, index: poignee.index });
-  }, []);
-
-  // Fin de glissement de poignée
-  const onPoigneeFin = useCallback(
-    (pt: Pt) => {
-      if (!poigneeActive) return;
-      const el = etat.elements.get(poigneeActive.elementId);
-      if (!el) { setPoigneeActive(null); return; }
-
-      const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, pt);
-      if (nouvelleGeom) {
-        dispatch({
-          type: "MODIFIER_ELEMENTS",
-          elements: [{ ...el, geometrie: nouvelleGeom }],
-        });
-      }
-      setPoigneeActive(null);
-    },
-    [poigneeActive, etat.elements],
-  );
+  // (poignées gérées directement dans onClicCanevas / onMouseUp)
 
   // Clic droit → terminer le tracé
   const onContextMenu = useCallback(
@@ -459,46 +554,40 @@ export function PageProjetClient() {
   // Fin de sélection rectangle ou de glissement de poignée (mouseup)
   const onMouseUp = useCallback(
     (pt: Pt) => {
-      // Fin de poignée
+      // Fin de glissement de poignée
       if (poigneeActive) {
-        onPoigneeFin(curseurRef.current);
+        const finalPt = curseurRef.current;
+        const el = etat.elements.get(poigneeActive.elementId);
+        if (el) {
+          const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
+          if (nouvelleGeom) {
+            dispatch({
+              type: "MODIFIER_ELEMENTS",
+              elements: [{ ...el, geometrie: nouvelleGeom }],
+            });
+          }
+        }
+        setPoigneeActive(null);
+        poigneePreviewRef.current = null;
         return;
       }
 
       if (!rectDebut || etat.outil !== "selection") return;
-      const xMin = Math.min(rectDebut[0], pt[0]);
-      const xMax = Math.max(rectDebut[0], pt[0]);
-      const yMin = Math.min(rectDebut[1], pt[1]);
-      const yMax = Math.max(rectDebut[1], pt[1]);
 
-      if (Math.abs(xMax - xMin) < 0.5 && Math.abs(yMax - yMin) < 0.5) {
+      if (Math.abs(pt[0] - rectDebut[0]) < 0.5 && Math.abs(pt[1] - rectDebut[1]) < 0.5) {
         setRectDebut(null);
         return;
       }
 
-      const rect: Pt[] = [[xMin, yMin], [xMax, yMin], [xMax, yMax], [xMin, yMax]];
-      const ids: string[] = [];
-
-      for (const el of etat.elements.values()) {
-        const geom = el.geometrie;
-        let pts: Pt[] = [];
-        switch (geom.type) {
-          case "polyligne": case "polygone": case "rectangle": pts = geom.points; break;
-          case "cercle": pts = [geom.centre]; break;
-          case "arc": pts = [geom.centre]; break;
-          case "point": pts = [geom.position]; break;
-        }
-        if (pts.some((p) => p[0] >= xMin && p[0] <= xMax && p[1] >= yMin && p[1] <= yMax)) {
-          ids.push(el.id);
-        }
-      }
+      const elements = Array.from(etat.elements.values());
+      const ids = selectionParRectangle(rectDebut, pt, elements, etat.calques);
 
       if (ids.length > 0) {
         dispatch({ type: "SELECTIONNER", ids, ajouter: shiftKeyRef.current });
       }
       setRectDebut(null);
     },
-    [rectDebut, etat.outil, etat.elements],
+    [rectDebut, etat.outil, etat.elements, etat.calques, poigneeActive],
   );
 
   // Saisie Entrée/Espace
@@ -508,8 +597,89 @@ export function PageProjetClient() {
 
       // Commande ?
       if (COMMANDES[s]) {
-        dispatch({ type: "CHANGER_OUTIL", outil: COMMANDES[s] });
+        const outil = COMMANDES[s];
+        dispatch({ type: "CHANGER_OUTIL", outil });
+        // Outils d'édition → démarrer en phase sélection
+        if (["deplacer", "copier", "rotation", "miroir"].includes(outil)) {
+          if (etat.selection.size > 0) {
+            setPhaseEdition("base");
+            dispatch({ type: "CHANGER_OUTIL", outil, message: "Point de base" });
+          } else {
+            setPhaseEdition("selection");
+            dispatch({ type: "CHANGER_OUTIL", outil, message: "Sélectionnez les objets, puis Entrée" });
+          }
+        }
         return;
+      }
+
+      // Phase d'édition : Entrée valide la sélection → passer à base
+      if (
+        ["deplacer", "copier", "rotation", "miroir"].includes(etat.outil) &&
+        phaseEdition === "selection" &&
+        texte.trim() === ""
+      ) {
+        if (etat.selection.size > 0) {
+          setPhaseEdition("base");
+          dispatch({ type: "CHANGER_OUTIL", outil: etat.outil, message: "Point de base" });
+        }
+        return;
+      }
+
+      // Phase destination : saisie de distance (M, CO) ou angle (RO)
+      if (phaseEdition === "destination" && editBase) {
+        if (etat.outil === "rotation") {
+          const angle = parseFloat(texte);
+          if (!isNaN(angle)) {
+            const modifies = Array.from(etat.selection)
+              .map((sid) => etat.elements.get(sid))
+              .filter(Boolean) as Element[];
+            dispatch({
+              type: "MODIFIER_ELEMENTS",
+              elements: modifies.map((el) => ({
+                ...el,
+                geometrie: rotationGeometrie(el.geometrie, editBase, angle),
+              })),
+            });
+            setEditBase(null);
+            setPhaseEdition("selection");
+            dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+            return;
+          }
+        }
+        if (etat.outil === "deplacer" || etat.outil === "copier") {
+          const result = parseSaisie(texte, editBase, curseurRef.current);
+          if (result?.type === "longueur") {
+            const dx = result.point[0] - editBase[0];
+            const dy = result.point[1] - editBase[1];
+            const modifies = Array.from(etat.selection)
+              .map((sid) => etat.elements.get(sid))
+              .filter(Boolean) as Element[];
+            if (etat.outil === "deplacer") {
+              dispatch({
+                type: "MODIFIER_ELEMENTS",
+                elements: modifies.map((el) => ({
+                  ...el,
+                  geometrie: deplacerGeometrie(el.geometrie, dx, dy),
+                })),
+              });
+              setEditBase(null);
+              setPhaseEdition("selection");
+              dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+            } else {
+              modifies.forEach((el) => {
+                dispatch({
+                  type: "CREER_ELEMENT",
+                  element: {
+                    ...el,
+                    id: genererIdLocal(),
+                    geometrie: copierGeometrie(el.geometrie, dx, dy),
+                  },
+                });
+              });
+            }
+            return;
+          }
+        }
       }
 
       // Pendant un tracé : longueur ou fermeture
@@ -557,7 +727,7 @@ export function PageProjetClient() {
         dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
       }
     },
-    [etat.traceEnCours, etat.outil, etat.calqueActif, etat.elements],
+    [etat.traceEnCours, etat.outil, etat.calqueActif, etat.elements, etat.selection, phaseEdition, editBase],
   );
 
   // Raccourcis clavier globaux — toutes les frappes passent par ici
@@ -603,24 +773,24 @@ export function PageProjetClient() {
       // Ignorer les autres raccourcis système
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      // Entrée ou Espace → valider la saisie
+      // Entrée ou Espace → valider la saisie (lire depuis la ref, pas la closure)
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        onEntreeSaisie(etat.saisie);
+        onEntreeSaisie(saisieRef.current);
         dispatch({ type: "SAISIE", texte: "" });
         return;
       }
 
       // Backspace dans la saisie
       if (e.key === "Backspace") {
-        dispatch({ type: "SAISIE", texte: etat.saisie.slice(0, -1) });
+        dispatch({ type: "SAISIE", texte: saisieRef.current.slice(0, -1) });
         return;
       }
 
       // Caractères imprimables → barre de saisie
       if (e.key.length === 1) {
         e.preventDefault();
-        dispatch({ type: "SAISIE", texte: etat.saisie + e.key });
+        dispatch({ type: "SAISIE", texte: saisieRef.current + e.key });
       }
     };
 
@@ -725,7 +895,7 @@ export function PageProjetClient() {
           </form>
         </div>
       </header>
-      <div className="flex-1 relative">
+      <div className="flex-1 relative overflow-hidden">
         <CanevasEditeur
           parcelles={projet.parcelles_geojson}
           batiments={projet.batiments_geojson ?? []}
@@ -745,9 +915,10 @@ export function PageProjetClient() {
           onMouseMove={onMouseMove}
           onContextMenu={onContextMenu}
           onMouseUp={onMouseUp}
+          survoleRef={survoleRef}
+          poigneeSurvoleRef={poigneeSurvoleRef}
+          poigneePreviewRef={poigneePreviewRef}
           poigneeActive={poigneeActive}
-          onPoigneeDebut={onPoigneeDebut}
-          onPoigneeFin={onPoigneeFin}
         />
 
         <BarreOutils
@@ -777,6 +948,7 @@ export function PageProjetClient() {
           message={etat.messageCommande}
           sauvegarde={sauvegarde}
         />
+        <span data-testid="element-count" className="hidden">{etat.elements.size}</span>
       </div>
     </div>
   );
@@ -800,42 +972,7 @@ function calculerSurface(geom: GeoJSON.Polygon | GeoJSON.MultiPolygon): number {
   return Math.round(total);
 }
 
-function hitTest(pt: Pt, elements: Element[]): Element | null {
-  let best: Element | null = null;
-  let bestDist = 2;
-
-  for (const el of elements) {
-    const geom = el.geometrie;
-    let points: Pt[] = [];
-
-    switch (geom.type) {
-      case "polyligne":
-      case "polygone":
-      case "rectangle":
-        points = geom.points;
-        break;
-      case "cercle":
-        points = [geom.centre];
-        break;
-      case "arc":
-        points = [geom.centre];
-        break;
-      case "point":
-        points = [geom.position];
-        break;
-    }
-
-    for (const p of points) {
-      const d = Math.sqrt((p[0] - pt[0]) ** 2 + (p[1] - pt[1]) ** 2);
-      if (d < bestDist) {
-        bestDist = d;
-        best = el;
-      }
-    }
-  }
-
-  return best;
-}
+// hitTest supprimé — remplacé par hitTestGeometrique dans selection.ts
 
 function calculerArcDepuis3Points(p1: Pt, p2: Pt, p3: Pt): Geometrie | null {
   // Circumcenter of 3 points

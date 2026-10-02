@@ -46,7 +46,7 @@ export function PanneauInfos({ selection }: Props) {
             <>
               <div className="flex justify-between">
                 <dt className="text-stone">Surface</dt>
-                <dd className="text-ink">{surface(el.geometrie.points).toFixed(2)} m²</dd>
+                <dd className="text-ink" data-testid="info-surface">{surface(el.geometrie.points).toFixed(2)} m²</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-stone">Périmètre</dt>

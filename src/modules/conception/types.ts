@@ -38,12 +38,21 @@ export interface GeometriePoint {
   position: Pt;
 }
 
+export interface GeometrieCote {
+  type: "cote";
+  p1: Pt;       // Premier point mesuré
+  p2: Pt;       // Deuxième point mesuré
+  decalage: number; // Distance de la ligne de cote par rapport au segment, en mètres
+  distance: number; // Distance mesurée en mètres
+}
+
 export type Geometrie =
   | GeometriePolyligne
   | GeometriePolygone
   | GeometrieRectangle
   | GeometrieCercle
   | GeometrieArc
+  | GeometrieCote
   | GeometriePoint;
 
 // ===================== Élément =====================

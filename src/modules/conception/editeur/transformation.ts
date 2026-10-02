@@ -51,6 +51,8 @@ function transformerPoints(geom: Geometrie, fn: (pt: Pt) => Pt): Geometrie {
       return { ...geom, centre: fn(geom.centre) };
     case "arc":
       return { ...geom, centre: fn(geom.centre) };
+    case "cote":
+      return { ...geom, p1: fn(geom.p1), p2: fn(geom.p2) };
     case "point":
       return { ...geom, position: fn(geom.position) };
   }

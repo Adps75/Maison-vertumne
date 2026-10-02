@@ -46,9 +46,10 @@ interface Props {
   onMouseMove: (pt: Pt) => void;
   onContextMenu: (e: React.MouseEvent) => void;
   onMouseUp: (pt: Pt) => void;
+  survoleRef: React.RefObject<string | null>;
+  poigneeSurvoleRef: React.RefObject<Poignee | null>;
+  poigneePreviewRef: React.RefObject<Pt | null>;
   poigneeActive: Poignee | null;
-  onPoigneeDebut: (poignee: Poignee) => void;
-  onPoigneeFin: (pt: Pt) => void;
 }
 
 const LAITON = "#9C7C3C";
@@ -74,9 +75,10 @@ export function CanevasEditeur({
   onMouseMove,
   onContextMenu,
   onMouseUp,
+  survoleRef,
+  poigneeSurvoleRef,
+  poigneePreviewRef,
   poigneeActive,
-  onPoigneeDebut,
-  onPoigneeFin,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -328,13 +330,16 @@ export function CanevasEditeur({
             );
           })}
 
-          {/* Éléments du plan — couleur du calque */}
+          {/* Éléments du plan — couleur du calque, surbrillance survol */}
           {Array.from(elements.values()).map((el) => {
             if (!calqueVisible.has(el.calque)) return null;
             const selected = selection.has(el.id);
+            const hovered = survoleRef.current === el.id && !selected;
             const calqueColor = calqueCouleurMap.get(el.calque) ?? "#CCCCCC";
             const color = selected ? SELECTION : calqueColor;
-            return renderElement(el, color, zoom);
+            // Épaisseurs constantes à l'écran (strokeScaleEnabled=false → valeurs en pixels écran)
+            const strokeW = selected ? 4 : hovered ? 3 : 2;
+            return renderElement(el, color, strokeW, zoom);
           })}
         </Layer>
 
@@ -346,8 +351,9 @@ export function CanevasEditeur({
               <Line
                 points={coordonneesVersEcran(traceEnCours)}
                 stroke={LAITON}
-                strokeWidth={1.5 / zoom}
-                dash={[6 / zoom, 4 / zoom]}
+                strokeWidth={2}
+                strokeScaleEnabled={false}
+                dash={[8, 5]}
               />
               {/* Segment fantôme vers le curseur */}
               {(() => {
@@ -363,18 +369,29 @@ export function CanevasEditeur({
                     <Line
                       points={[ecD.x, ecD.y, ecC.x, ecC.y]}
                       stroke={LAITON}
-                      strokeWidth={1 / zoom}
-                      dash={[4 / zoom, 4 / zoom]}
-                      opacity={0.6}
+                      strokeWidth={1.5}
+                      strokeScaleEnabled={false}
+                      dash={[6, 4]}
+                      opacity={0.8}
                     />
                     {d > 0.1 && (
+                      <>
+                      <Rect
+                        x={(ecD.x + ecC.x) / 2 - 40 / zoom}
+                        y={(ecD.y + ecC.y) / 2 - 16 / zoom}
+                        width={80 / zoom}
+                        height={14 / zoom}
+                        fill="rgba(0,0,0,0.6)"
+                        cornerRadius={2 / zoom}
+                      />
                       <Text
                         x={(ecD.x + ecC.x) / 2}
                         y={(ecD.y + ecC.y) / 2 - 14 / zoom}
                         text={`${d.toFixed(2)} m  ${a.toFixed(0)}°`}
-                        fontSize={10 / zoom}
-                        fill={LAITON}
+                        fontSize={11 / zoom}
+                        fill="#FFFFFF"
                       />
+                      </>
                     )}
                   </>
                 );
@@ -411,18 +428,28 @@ export function CanevasEditeur({
             return symbols[acc.type] ?? null;
           })()}
 
-          {/* Poignées des éléments sélectionnés */}
+          {/* Poignées des éléments sélectionnés (non interactives — hit-test géré par PageProjetClient) */}
           {outil === "selection" && Array.from(selection).map((selId) => {
             const el = elements.get(selId);
             if (!el) return null;
             const poignees = extrairePoignees(el);
             return poignees.map((p, pi) => {
-              const ec = terrainVersEcran({ x: p.point[0], y: p.point[1] });
-              const taille = p.type === "milieu" ? 3.5 / zoom : 5 / zoom;
-              const fill = p.type === "milieu" ? "#3B82F6" : "#2563EB";
-              const dragging = poigneeActive?.elementId === p.elementId
+              const isDragging = poigneeActive?.elementId === p.elementId
                 && poigneeActive?.type === p.type
                 && poigneeActive?.index === p.index;
+              const isHovered = poigneeSurvoleRef.current?.elementId === p.elementId
+                && poigneeSurvoleRef.current?.type === p.type
+                && poigneeSurvoleRef.current?.index === p.index;
+
+              // Position : si cette poignée est glissée, utiliser la preview
+              const pos = isDragging && poigneePreviewRef.current
+                ? poigneePreviewRef.current
+                : p.point;
+              const ec = terrainVersEcran({ x: pos[0], y: pos[1] });
+              const taille = p.type === "milieu" ? 3 / zoom : 5 / zoom;
+              const fill = isDragging ? "#EF4444"
+                : isHovered ? "#60A5FA"
+                : p.type === "milieu" ? "#3B82F6" : "#2563EB";
 
               return (
                 <Rect
@@ -431,12 +458,10 @@ export function CanevasEditeur({
                   y={ec.y - taille}
                   width={taille * 2}
                   height={taille * 2}
-                  fill={dragging ? "#EF4444" : fill}
+                  fill={fill}
                   stroke="#fff"
                   strokeWidth={1 / zoom}
-                  listening
-                  onMouseDown={() => onPoigneeDebut(p)}
-                  onTouchStart={() => onPoigneeDebut(p)}
+                  listening={false}
                 />
               );
             });
@@ -479,69 +504,115 @@ export function CanevasEditeur({
   );
 }
 
-function renderElement(el: Element, color: string, zoom: number): React.ReactNode {
+function renderElement(el: Element, color: string, sw: number, zoom: number, fillOpacityOverride?: number): React.ReactNode {
   const key = el.id;
-  const sw = 1.5 / zoom;
+  const lisereSw = sw + 2; // +1px de chaque côté
+  const fillColor = color + "33"; // 20% opacity via hex alpha
+
+  // Helper : trait avec liseré sombre
+  const trait = (points: number[], closed = false, fill = false) => (
+    <Group key={key}>
+      {/* Liseré sombre */}
+      <Line
+        points={points}
+        closed={closed}
+        stroke="rgba(0,0,0,0.35)"
+        strokeWidth={lisereSw}
+        strokeScaleEnabled={false}
+        listening={false}
+      />
+      {/* Trait principal */}
+      <Line
+        points={points}
+        closed={closed}
+        stroke={color}
+        strokeWidth={sw}
+        strokeScaleEnabled={false}
+        fill={fill ? fillColor : undefined}
+        listening={false}
+      />
+    </Group>
+  );
 
   switch (el.geometrie.type) {
     case "polyligne":
-      return (
-        <Line
-          key={key}
-          points={coordonneesVersEcran(el.geometrie.points)}
-          stroke={color}
-          strokeWidth={sw}
-        />
-      );
+      return trait(coordonneesVersEcran(el.geometrie.points));
 
     case "polygone":
     case "rectangle":
-      return (
-        <Line
-          key={key}
-          points={coordonneesVersEcran(el.geometrie.points)}
-          closed
-          stroke={color}
-          strokeWidth={sw}
-          fill={color === LAITON ? "rgba(156,124,60,0.08)" : "rgba(37,99,235,0.08)"}
-        />
-      );
+      return trait(coordonneesVersEcran(el.geometrie.points), true, true);
 
     case "cercle": {
       const pts = cercleVersPolygone(
-        el.geometrie.centre[0],
-        el.geometrie.centre[1],
-        el.geometrie.rayon,
-        64,
+        el.geometrie.centre[0], el.geometrie.centre[1], el.geometrie.rayon, 64,
       );
-      return (
-        <Line
-          key={key}
-          points={coordonneesVersEcran(pts)}
-          closed
-          stroke={color}
-          strokeWidth={sw}
-          fill={color === LAITON ? "rgba(156,124,60,0.08)" : "rgba(37,99,235,0.08)"}
-        />
-      );
+      return trait(coordonneesVersEcran(pts), true, true);
     }
 
     case "arc": {
       const pts = arcVersPoints(
-        el.geometrie.centre[0],
-        el.geometrie.centre[1],
-        el.geometrie.rayon,
-        el.geometrie.angleDebut,
-        el.geometrie.angleFin,
-        32,
+        el.geometrie.centre[0], el.geometrie.centre[1], el.geometrie.rayon,
+        el.geometrie.angleDebut, el.geometrie.angleFin, 32,
       );
+      return trait(coordonneesVersEcran(pts));
+    }
+
+    case "cote": {
+      const { p1, p2, decalage, distance: d } = el.geometrie;
+      // Direction perpendiculaire
+      const dx = p2[0] - p1[0];
+      const dy = p2[1] - p1[1];
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const nx = len > 0 ? -dy / len : 0;
+      const ny = len > 0 ? dx / len : 1;
+
+      // Points de la ligne de cote (décalée)
+      const c1: Pt = [p1[0] + nx * decalage, p1[1] + ny * decalage];
+      const c2: Pt = [p2[0] + nx * decalage, p2[1] + ny * decalage];
+
+      // Traits de rappel
+      const rappelExt = decalage > 0 ? decalage + 0.3 : decalage - 0.3;
+      const r1a = terrainVersEcran({ x: p1[0], y: p1[1] });
+      const r1b = terrainVersEcran({ x: p1[0] + nx * rappelExt, y: p1[1] + ny * rappelExt });
+      const r2a = terrainVersEcran({ x: p2[0], y: p2[1] });
+      const r2b = terrainVersEcran({ x: p2[0] + nx * rappelExt, y: p2[1] + ny * rappelExt });
+
+      const ec1 = terrainVersEcran({ x: c1[0], y: c1[1] });
+      const ec2 = terrainVersEcran({ x: c2[0], y: c2[1] });
+      const midX = (ec1.x + ec2.x) / 2;
+      const midY = (ec1.y + ec2.y) / 2;
+
+      const texte = d.toFixed(2).replace(".", ",") + " m";
+
       return (
-        <Line
-          key={key}
-          points={coordonneesVersEcran(pts)}
-          stroke={color}
-          strokeWidth={sw}
-        />
+        <Group key={key}>
+          {/* Traits de rappel */}
+          <Line points={[r1a.x, r1a.y, r1b.x, r1b.y]} stroke={color} strokeWidth={1} strokeScaleEnabled={false} />
+          <Line points={[r2a.x, r2a.y, r2b.x, r2b.y]} stroke={color} strokeWidth={1} strokeScaleEnabled={false} />
+          {/* Ligne de cote */}
+          <Line points={[ec1.x, ec1.y, ec2.x, ec2.y]} stroke={color} strokeWidth={sw} strokeScaleEnabled={false} />
+          {/* Marques aux extrémités */}
+          <Line points={[ec1.x - 3 / zoom, ec1.y - 3 / zoom, ec1.x + 3 / zoom, ec1.y + 3 / zoom]} stroke={color} strokeWidth={1.5} strokeScaleEnabled={false} />
+          <Line points={[ec2.x - 3 / zoom, ec2.y - 3 / zoom, ec2.x + 3 / zoom, ec2.y + 3 / zoom]} stroke={color} strokeWidth={1.5} strokeScaleEnabled={false} />
+          {/* Texte avec fond */}
+          <Rect
+            x={midX - (texte.length * 3.5) / zoom}
+            y={midY - 8 / zoom}
+            width={(texte.length * 7) / zoom}
+            height={14 / zoom}
+            fill="rgba(255,255,255,0.85)"
+            cornerRadius={2 / zoom}
+          />
+          <Text
+            x={midX}
+            y={midY}
+            text={texte}
+            fontSize={11 / zoom}
+            fill={color}
+            offsetX={(texte.length * 3.2) / zoom}
+            offsetY={6 / zoom}
+          />
+        </Group>
       );
     }
 
@@ -552,13 +623,23 @@ function renderElement(el: Element, color: string, zoom: number): React.ReactNod
         <Group key={key}>
           <Circle x={ec.x} y={ec.y} radius={3 / zoom} fill={color} />
           {texte && (
-            <Text
-              x={ec.x + 6 / zoom}
-              y={ec.y - 6 / zoom}
-              text={texte}
-              fontSize={12 / zoom}
-              fill={color}
-            />
+            <>
+              <Rect
+                x={ec.x + 5 / zoom}
+                y={ec.y - 8 / zoom}
+                width={(texte.length * 6.5) / zoom}
+                height={14 / zoom}
+                fill="rgba(255,255,255,0.85)"
+                cornerRadius={2 / zoom}
+              />
+              <Text
+                x={ec.x + 6 / zoom}
+                y={ec.y - 6 / zoom}
+                text={texte}
+                fontSize={12 / zoom}
+                fill={color}
+              />
+            </>
           )}
         </Group>
       );

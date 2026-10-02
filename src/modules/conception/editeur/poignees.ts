@@ -66,6 +66,11 @@ export function extrairePoignees(el: Element): Poignee[] {
       break;
     }
 
+    case "cote":
+      poignees.push({ elementId: el.id, type: "sommet", index: 0, point: geom.p1 });
+      poignees.push({ elementId: el.id, type: "sommet", index: 1, point: geom.p2 });
+      break;
+
     case "point":
       poignees.push({ elementId: el.id, type: "centre", index: -1, point: geom.position });
       break;
@@ -149,6 +154,18 @@ export function appliquerDeplacementPoignee(
           return { ...geom, rayon, angleFin: (angle + 360) % 360 };
         }
         return { ...geom, rayon };
+      }
+      return geom;
+    }
+
+    case "cote": {
+      if (poignee.index === 0) {
+        const newDist = dist(nouvPos, geom.p2);
+        return { ...geom, p1: nouvPos, distance: Math.round(newDist * 100) / 100 };
+      }
+      if (poignee.index === 1) {
+        const newDist = dist(geom.p1, nouvPos);
+        return { ...geom, p2: nouvPos, distance: Math.round(newDist * 100) / 100 };
       }
       return geom;
     }
