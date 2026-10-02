@@ -12,7 +12,7 @@ Outil de conception paysagère intégré à la plateforme Atelier des Prés, ins
 ## Modules et solutions techniques
 - Parcelle : orthophoto IGN (Géoplateforme), contour via l'API Carto Cadastre, bâtiments + hauteurs via la BD TOPO (WFS). Données IGN en licence ouverte. Coordonnées en Lambert 93 (EPSG:2154, proj4) pour travailler en mètres.
 - Détection auto : maison via BD TOPO ; arbres existants via segmentation IA sur l'orthophoto, validés à la main.
-- Éditeur de plan 2D : Konva.js + Turf.js (polygones, arcs, accrochage, cotes, surfaces) ; quantités automatiques vers le devis.
+- Éditeur de plan 2D : Konva.js + fonctions géométriques planes (plan.ts) + polygon-clipping pour les opérations booléennes ; quantités automatiques vers le devis. Pas de Turf.js (coordonnées en mètres sur un plan, pas en lon/lat).
 - Bibliothèque végétale IA : génération sur fond blanc (vue de face + vue de dessus), détourage auto, fiche plante (nom latin, hauteur à 3 ans, largeur, prix). Style graphique fixe pour une signature cohérente.
 - 3D : Three.js / React Three Fiber ; extrusion des surfaces ; plantes en billboards à leur hauteur réelle.
 - Calage photo (partie la plus difficile) : l'utilisateur clique 4 points au sol sur la photo et les mêmes 4 sur le plan ; OpenCV.js solvePnP calcule la position de la caméra (focale lue dans l'EXIF).
