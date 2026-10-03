@@ -85,6 +85,9 @@ export function PageConceptionClient() {
       <header className="border-b border-hair-light px-6 py-4 flex items-center justify-between">
         <h1 className="font-serif font-medium text-[1.3rem] text-green-950">Projets</h1>
         <div className="flex items-center gap-4">
+          <a href="/conception/bibliotheque" className="text-[0.85rem] text-brass hover:text-brass-soft">
+            Bibliothèque
+          </a>
           <button
             onClick={() => setModale(true)}
             className="px-4 py-2 bg-brass text-paper text-[0.85rem] font-medium rounded hover:bg-brass-soft transition-colors"
