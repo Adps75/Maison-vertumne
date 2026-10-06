@@ -21,10 +21,12 @@ import { BarreOutils } from "@/modules/conception/composants/BarreOutils";
 import { PanneauCalques } from "@/modules/conception/composants/PanneauCalques";
 import { PanneauInfos } from "@/modules/conception/composants/PanneauInfos";
 import { BarreSaisie } from "@/modules/conception/composants/BarreSaisie";
+import { BarreEtapes } from "@/modules/conception/composants/BarreEtapes";
+import { PanneauZones } from "@/modules/conception/composants/PanneauZones";
 import { genererIdLocal } from "@/lib/id-client";
 import { ecranVersTerrain } from "@/modules/conception/geo/canevas";
 import { trouverAccrochage, contrainteOrtho } from "@/modules/conception/editeur/accrochage";
-import type { Element, Geometrie, NomOutil, Accrochage as AccrochageType } from "@/modules/conception/types";
+import type { Element, Geometrie, NomOutil, Accrochage as AccrochageType, NumeroEtape } from "@/modules/conception/types";
 import { deplacerGeometrie, copierGeometrie, rotationGeometrie, miroirGeometrie } from "@/modules/conception/editeur/transformation";
 import { dist as distPt } from "@/modules/conception/geo/plan";
 import type { Pt } from "@/modules/conception/geo/plan";
@@ -228,9 +230,10 @@ export function PageProjetClient() {
         const pSurvol = trouverPoignee(pt, toutesPoignees, 8, zoomRef.current);
         poigneeSurvoleRef.current = pSurvol;
 
-        // Survol d'élément (seulement si pas sur une poignée)
+        // Survol d'élément (seulement si pas sur une poignée ; zones seulement à l'étape 2)
         if (!pSurvol) {
-          const elements = Array.from(etat.elements.values());
+          const elements = Array.from(etat.elements.values())
+            .filter((el) => el.type !== "zone" || etat.etape === 2);
           survoleRef.current = elementSurvole(pt, elements, etat.calques, zoomRef.current);
         } else {
           survoleRef.current = null;
@@ -400,8 +403,9 @@ export function PageProjetClient() {
             break;
           }
 
-          // 2. Sélection d'élément
-          const elements = Array.from(etat.elements.values());
+          // 2. Sélection d'élément (zones seulement à l'étape 2)
+          const elements = Array.from(etat.elements.values())
+            .filter((el) => el.type !== "zone" || etat.etape === 2);
           const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
           if (touche) {
             dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
@@ -528,6 +532,53 @@ export function PageProjetClient() {
           break;
 
         case "mesurer":
+          dispatch({ type: "AJOUTER_POINT", point: pt });
+          break;
+
+        case "zone_rectangle":
+          if (etat.traceEnCours.length === 0) {
+            dispatch({ type: "AJOUTER_POINT", point: pt });
+          } else {
+            const p1z = etat.traceEnCours[0];
+            const nz = zonesCount(etat.elements);
+            const zoneEl: Element = {
+              id: genererIdLocal(),
+              type: "zone",
+              geometrie: {
+                type: "rectangle",
+                points: [p1z, [pt[0], p1z[1]], pt, [p1z[0], pt[1]]],
+              },
+              calque: "zones",
+              statut: "nouveau",
+              hauteur: null,
+              proprietes: { nom: `Zone ${nz + 1}`, ordre: nz },
+              ordre: etat.elements.size,
+            };
+            dispatch({ type: "CREER_ELEMENT", element: zoneEl });
+            dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+          }
+          break;
+
+        case "zone_polygone":
+          if (
+            etat.traceEnCours.length >= 3 &&
+            distPt(pt, etat.traceEnCours[0]) < 1
+          ) {
+            const nzp = zonesCount(etat.elements);
+            const zoneElP: Element = {
+              id: genererIdLocal(),
+              type: "zone",
+              geometrie: { type: "polygone", points: [...etat.traceEnCours] },
+              calque: "zones",
+              statut: "nouveau",
+              hauteur: null,
+              proprietes: { nom: `Zone ${nzp + 1}`, ordre: nzp },
+              ordre: etat.elements.size,
+            };
+            dispatch({ type: "CREER_ELEMENT", element: zoneElP });
+            dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+            break;
+          }
           dispatch({ type: "AJOUTER_POINT", point: pt });
           break;
 
@@ -710,8 +761,26 @@ export function PageProjetClient() {
         }
       }
 
-      // Entrée sans saisie pendant un tracé → terminer en polyligne
+      // Entrée sans saisie pendant un tracé → terminer
       if (texte.trim() === "" && etat.traceEnCours.length >= 2) {
+        // Zone polygone → créer une zone
+        if (etat.outil === "zone_polygone" && etat.traceEnCours.length >= 3) {
+          const nze = zonesCount(etat.elements);
+          const zoneEl: Element = {
+            id: genererIdLocal(),
+            type: "zone",
+            geometrie: { type: "polygone", points: [...etat.traceEnCours] },
+            calque: "zones",
+            statut: "nouveau",
+            hauteur: null,
+            proprietes: { nom: `Zone ${nze + 1}`, ordre: nze },
+            ordre: etat.elements.size,
+          };
+          dispatch({ type: "CREER_ELEMENT", element: zoneEl });
+          dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+          return;
+        }
+
         const geomType = etat.outil === "polygone" ? "polygone" : "polyligne";
         const element: Element = {
           id: genererIdLocal(),
@@ -809,6 +878,85 @@ export function PageProjetClient() {
     surfaceParcelle = calculerSurface(projet.parcelles_geojson);
   }
 
+  // Indicateurs pour BarreEtapes
+  const aZones = Array.from(etat.elements.values()).some((el) => el.type === "zone");
+  const aVegetaux = Array.from(etat.elements.values()).some((el) => el.type === "vegetal");
+
+  // Cadrage sur une zone (marge 10 %)
+  const cadrerSurZone = useCallback(
+    (points: Pt[]) => {
+      if (points.length === 0) return;
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      for (const [x, y] of points) {
+        if (x < xMin) xMin = x;
+        if (x > xMax) xMax = x;
+        if (y < yMin) yMin = y;
+        if (y > yMax) yMax = y;
+      }
+      const largeur = xMax - xMin;
+      const hauteur = yMax - yMin;
+      const marge = Math.max(largeur, hauteur) * 0.1 + 5;
+      const container = document.querySelector("[data-testid='canevas-container']");
+      const cw = container?.clientWidth ?? 800;
+      const ch = container?.clientHeight ?? 600;
+      const scaleX = cw / (largeur + marge * 2);
+      const scaleY = ch / (hauteur + marge * 2);
+      const scale = Math.min(scaleX, scaleY);
+      const centreX = (xMin + xMax) / 2;
+      const centreY = (yMin + yMax) / 2;
+      // terrainVersEcran juste flip Y
+      const ecX = centreX;
+      const ecY = -centreY;
+      zoomRef.current = scale;
+      // Force re-render via dispatch (pas d'état local pour zoom/position dans PageProjetClient)
+      // On utilise un événement custom que CanevasEditeur écoute
+      window.dispatchEvent(new CustomEvent("cadrer-zone", {
+        detail: { zoom: scale, x: cw / 2 - ecX * scale, y: ch / 2 - ecY * scale },
+      }));
+    },
+    [],
+  );
+
+  // "Tout le jardin" — crée une zone à l'emprise de la parcelle
+  const toutLeJardin = useCallback(async () => {
+    if (!projet?.parcelles_geojson) return;
+    const geojson = projet.parcelles_geojson;
+    let points: Pt[];
+
+    if (geojson.type === "MultiPolygon") {
+      // Union via polygon-clipping (import dynamique)
+      const pc = (await import("polygon-clipping")).default;
+      const polys = geojson.coordinates as unknown as import("polygon-clipping").Polygon[];
+      const result = pc.union(polys[0], ...polys.slice(1));
+      points = (result[0]?.[0] ?? []).map(([x, y]) => [x, y] as Pt);
+    } else {
+      points = (geojson.coordinates[0] ?? []).map(([x, y]) => [x, y] as Pt);
+    }
+
+    // Supprimer le dernier point s'il est identique au premier (GeoJSON fermé)
+    if (points.length > 1) {
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (first[0] === last[0] && first[1] === last[1]) {
+        points = points.slice(0, -1);
+      }
+    }
+
+    if (points.length < 3) return;
+
+    const zoneEl: Element = {
+      id: genererIdLocal(),
+      type: "zone",
+      geometrie: { type: "polygone", points },
+      calque: "zones",
+      statut: "nouveau",
+      hauteur: null,
+      proprietes: { nom: "Tout le jardin", ordre: zonesCount(etat.elements) },
+      ordre: etat.elements.size,
+    };
+    dispatch({ type: "CREER_ELEMENT", element: zoneEl });
+  }, [projet, etat.elements]);
+
   if (chargement) {
     return <div className="w-full h-screen bg-paper-2 animate-pulse" />;
   }
@@ -895,7 +1043,13 @@ export function PageProjetClient() {
           </form>
         </div>
       </header>
-      <div className="flex-1 relative overflow-hidden">
+      <BarreEtapes
+        etape={etat.etape}
+        aZones={aZones}
+        aVegetaux={aVegetaux}
+        dispatch={dispatch}
+      />
+      <div className="flex-1 relative overflow-hidden" data-testid="canevas-container">
         <CanevasEditeur
           parcelles={projet.parcelles_geojson}
           batiments={projet.batiments_geojson ?? []}
@@ -919,6 +1073,8 @@ export function PageProjetClient() {
           poigneeSurvoleRef={poigneeSurvoleRef}
           poigneePreviewRef={poigneePreviewRef}
           poigneeActive={poigneeActive}
+          etape={etat.etape}
+          zoneActive={etat.zoneActive}
         />
 
         <BarreOutils
@@ -936,6 +1092,16 @@ export function PageProjetClient() {
         />
 
         <PanneauInfos selection={selectionElements} />
+
+        {etat.etape === 2 && (
+          <PanneauZones
+            elements={etat.elements}
+            zoneActive={etat.zoneActive}
+            dispatch={dispatch}
+            onCadrerZone={cadrerSurZone}
+            onToutLeJardin={toutLeJardin}
+          />
+        )}
 
         {surfaceParcelle != null && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-white/90 px-3 py-1.5 rounded text-[0.82rem] text-ink border border-hair-light">
@@ -970,6 +1136,14 @@ function calculerSurface(geom: GeoJSON.Polygon | GeoJSON.MultiPolygon): number {
     total += Math.abs(area) / 2;
   }
   return Math.round(total);
+}
+
+function zonesCount(elements: Map<string, Element>): number {
+  let n = 0;
+  for (const el of elements.values()) {
+    if (el.type === "zone") n++;
+  }
+  return n;
 }
 
 // hitTest supprimé — remplacé par hitTestGeometrique dans selection.ts

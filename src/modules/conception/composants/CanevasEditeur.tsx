@@ -17,8 +17,9 @@ import {
   dist,
   angleEntrePoints,
 } from "../geo/plan";
-import type { Element, Calque, NomOutil, Accrochage } from "../types";
+import type { Element, Calque, NomOutil, Accrochage, NumeroEtape } from "../types";
 import type { Pt } from "../geo/plan";
+import { surface as surfacePoly } from "../geo/plan";
 import { extrairePoignees, type Poignee } from "../editeur/poignees";
 
 interface Batiment {
@@ -50,6 +51,8 @@ interface Props {
   poigneeSurvoleRef: React.RefObject<Poignee | null>;
   poigneePreviewRef: React.RefObject<Pt | null>;
   poigneeActive: Poignee | null;
+  etape: NumeroEtape;
+  zoneActive: string | null;
 }
 
 const LAITON = "#9C7C3C";
@@ -79,6 +82,8 @@ export function CanevasEditeur({
   poigneeSurvoleRef,
   poigneePreviewRef,
   poigneeActive,
+  etape,
+  zoneActive,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -110,6 +115,20 @@ export function CanevasEditeur({
     img.onload = () => setImage(img);
     img.src = orthoUrl;
   }, [orthoUrl]);
+
+  // Écouter l'événement de cadrage sur zone
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) {
+        setZoom(detail.zoom);
+        zoomRef.current = detail.zoom;
+        setPosition({ x: detail.x, y: detail.y });
+      }
+    };
+    window.addEventListener("cadrer-zone", handler);
+    return () => window.removeEventListener("cadrer-zone", handler);
+  }, [zoomRef]);
 
   // Centrage initial
   useEffect(() => {
@@ -332,15 +351,112 @@ export function CanevasEditeur({
 
           {/* Éléments du plan — couleur du calque, surbrillance survol */}
           {Array.from(elements.values()).map((el) => {
+            if (el.type === "zone") return null; // Rendues séparément
             if (!calqueVisible.has(el.calque)) return null;
             const selected = selection.has(el.id);
             const hovered = survoleRef.current === el.id && !selected;
             const calqueColor = calqueCouleurMap.get(el.calque) ?? "#CCCCCC";
             const color = selected ? SELECTION : calqueColor;
-            // Épaisseurs constantes à l'écran (strokeScaleEnabled=false → valeurs en pixels écran)
             const strokeW = selected ? 4 : hovered ? 3 : 2;
             return renderElement(el, color, strokeW, zoom);
           })}
+
+          {/* Zones de travail — contour pointillé laiton + nom au centroïde */}
+          {calqueVisible.has("zones") && Array.from(elements.values())
+            .filter((el) => el.type === "zone")
+            .map((el) => {
+              const pts = el.geometrie.type === "polygone" || el.geometrie.type === "rectangle"
+                ? el.geometrie.points : [];
+              if (pts.length < 3) return null;
+              const selected = selection.has(el.id);
+              const isActive = zoneActive === el.id;
+              const nom = (el.proprietes?.nom as string) ?? "Zone";
+
+              // Centroïde
+              let cx = 0, cy = 0;
+              for (const [x, y] of pts) { cx += x; cy += y; }
+              cx /= pts.length; cy /= pts.length;
+              const ecC = terrainVersEcran({ x: cx, y: cy });
+
+              return (
+                <Group key={`zone-${el.id}`}>
+                  <Line
+                    points={coordonneesVersEcran(pts)}
+                    closed
+                    stroke={selected ? SELECTION : isActive ? "#B8963C" : LAITON}
+                    strokeWidth={selected ? 3 : isActive ? 2.5 : 2}
+                    strokeScaleEnabled={false}
+                    dash={[10, 6]}
+                    fill={isActive ? "rgba(156,124,60,0.06)" : undefined}
+                  />
+                  <Text
+                    x={ecC.x}
+                    y={ecC.y}
+                    text={nom}
+                    fontSize={12 / zoom}
+                    fill={LAITON}
+                    offsetX={(nom.length * 3.5) / zoom}
+                    offsetY={6 / zoom}
+                    fontStyle="bold"
+                  />
+                </Group>
+              );
+            })}
+
+          {/* Voile extérieur — atténue l'extérieur de la zone active */}
+          {zoneActive && (() => {
+            const zoneEl = elements.get(zoneActive);
+            if (!zoneEl || zoneEl.type !== "zone") return null;
+            const pts = zoneEl.geometrie.type === "polygone" || zoneEl.geometrie.type === "rectangle"
+              ? zoneEl.geometrie.points : [];
+            if (pts.length < 3) return null;
+
+            // Grand rectangle couvrant tout le viewport (en coordonnées terrain)
+            const marge = 10000;
+            const outerPts: number[] = [
+              -marge, marge, marge, marge, marge, -marge, -marge, -marge,
+            ];
+            // Trou = la zone (inversé Y pour écran)
+            const holePts = pts.flatMap(([x, y]) => {
+              const ec = terrainVersEcran({ x, y });
+              return [ec.x, ec.y];
+            });
+            // Outer en coordonnées écran
+            const outerEc = [
+              -marge, -marge, marge, -marge, marge, marge, -marge, marge,
+            ];
+
+            return (
+              <Group>
+                {/* Rectangle extérieur avec trou via clipFunc */}
+                <Rect
+                  x={-marge}
+                  y={-marge}
+                  width={marge * 2}
+                  height={marge * 2}
+                  fill="rgba(255,255,255,0.45)"
+                  listening={false}
+                  clipFunc={(ctx: CanvasRenderingContext2D) => {
+                    // Extérieur (sens horaire)
+                    ctx.moveTo(-marge, -marge);
+                    ctx.lineTo(marge, -marge);
+                    ctx.lineTo(marge, marge);
+                    ctx.lineTo(-marge, marge);
+                    ctx.closePath();
+                    // Trou = zone (sens anti-horaire)
+                    const ecPts = pts.map(([x, y]) => terrainVersEcran({ x, y }));
+                    if (ecPts.length > 0) {
+                      ctx.moveTo(ecPts[ecPts.length - 1].x, ecPts[ecPts.length - 1].y);
+                      for (const p of ecPts) {
+                        ctx.lineTo(p.x, p.y);
+                      }
+                      ctx.closePath();
+                    }
+                  }}
+                />
+              </Group>
+            );
+          })()}
         </Layer>
 
         {/* Couche interactive — tracé en cours, accrochage, fantôme */}

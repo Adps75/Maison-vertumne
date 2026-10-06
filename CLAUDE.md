@@ -73,6 +73,17 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
 - Accès réservé aux administrateurs connectés (Supabase Auth + table admins).
 - Chaque route API et server action du module appelle exigerAdmin()
   (src/lib/auth/admin.ts) en première ligne.
+- Feuille de route en 6 étapes :
+  1. Adresse, vue aérienne (fait)
+  2. Zones de travail (fait)
+  3. Calques, sous-calques et matériaux
+  4. Végétaux — bibliothèque IA et placement (fait)
+  5. Photos, calage, visuel 3D
+  6. Rendus IA et rendu du plan
+- Les zones sont des éléments ordinaires (type "zone", calque système "zones"),
+  pas une table séparée. Elles bénéficient de l'historique, la sauvegarde
+  différentielle, les poignées et l'accrochage sans code supplémentaire.
+- Le calque "zones" est non supprimable et exclu des rendus.
 
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.

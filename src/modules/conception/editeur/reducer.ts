@@ -6,6 +6,7 @@ import type {
   ActionHistorique,
   Geometrie,
   ChangementsEnAttente,
+  NumeroEtape,
 } from "../types";
 import type { Pt } from "../geo/plan";
 import { Historique } from "./historique";
@@ -33,22 +34,28 @@ export type Action =
   | { type: "OPACITE_ORTHO"; opacite: number }
   | { type: "SAISIE"; texte: string }
   | { type: "CHARGER_ELEMENTS"; elements: Element[] }
-  | { type: "MARQUER_SAUVEGARDE" };
+  | { type: "MARQUER_SAUVEGARDE" }
+  | { type: "CHANGER_ETAPE"; etape: NumeroEtape }
+  | { type: "ACTIVER_ZONE"; id: string | null }
+  | { type: "RENOMMER_ZONE"; id: string; nom: string };
 
 // ===================== État initial =====================
 
 export const CALQUES_DEFAUT: Calque[] = [
-  { nom: "existant", visible: true, verrouille: false, couleur: "#E8E050" },    // Jaune vif
-  { nom: "sols", visible: true, verrouille: false, couleur: "#E07830" },         // Orange
-  { nom: "mineral", visible: true, verrouille: false, couleur: "#50B8E0" },      // Bleu clair
-  { nom: "vegetal", visible: true, verrouille: false, couleur: "#40D870" },       // Vert vif
-  { nom: "cotes", visible: true, verrouille: false, couleur: "#FF4040" },         // Rouge vif
-  { nom: "annotations", visible: true, verrouille: false, couleur: "#F0C040" },   // Or
+  { nom: "zones", visible: true, verrouille: false, couleur: "#9C7C3C" },         // Laiton (calque système)
+  { nom: "existant", visible: true, verrouille: false, couleur: "#E8E050" },       // Jaune vif
+  { nom: "sols", visible: true, verrouille: false, couleur: "#E07830" },           // Orange
+  { nom: "mineral", visible: true, verrouille: false, couleur: "#50B8E0" },        // Bleu clair
+  { nom: "vegetal", visible: true, verrouille: false, couleur: "#40D870" },         // Vert vif
+  { nom: "cotes", visible: true, verrouille: false, couleur: "#FF4040" },           // Rouge vif
+  { nom: "annotations", visible: true, verrouille: false, couleur: "#F0C040" },     // Or
 ];
 
 export function etatInitial(): EtatEditeur {
   return {
     outil: "selection",
+    etape: 1,
+    zoneActive: null,
     elements: new Map(),
     selection: new Set(),
     traceEnCours: [],
@@ -284,7 +291,37 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
     }
 
     case "MARQUER_SAUVEGARDE":
-      return etat; // Pas de changement d'état visible
+      return etat;
+
+    case "CHANGER_ETAPE":
+      return {
+        ...etat,
+        etape: action.etape,
+        outil: "selection",
+        traceEnCours: [],
+        selection: new Set(),
+        saisie: "",
+        messageCommande: "Prêt",
+      };
+
+    case "ACTIVER_ZONE":
+      return { ...etat, zoneActive: action.id };
+
+    case "RENOMMER_ZONE": {
+      const el = etat.elements.get(action.id);
+      if (!el || el.type !== "zone") return etat;
+      const modifie = { ...el, proprietes: { ...el.proprietes, nom: action.nom } };
+      const elements = new Map(etat.elements);
+      elements.set(action.id, modifie);
+      changements.upserts.push(modifie);
+      historique.push({
+        type: "modifier",
+        avant: [el],
+        apres: [modifie],
+        suppressions: [],
+      });
+      return { ...etat, elements };
+    }
 
     default:
       return etat;
@@ -306,6 +343,8 @@ function messageOutil(outil: NomOutil): string {
     rotation: "RO : sélectionnez puis cliquez le centre de rotation",
     miroir: "MI : sélectionnez puis cliquez le premier point de l'axe",
     mesurer: "Cliquez deux points pour mesurer",
+    zone_rectangle: "Zone rectangle : cliquez le premier coin",
+    zone_polygone: "Zone polygone : cliquez les sommets, Entrée pour terminer",
   };
   return messages[outil] ?? "Prêt";
 }

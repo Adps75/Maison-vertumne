@@ -18,7 +18,7 @@ export function PanneauCalques({ calques, calqueActif, opaciteOrtho, dispatch }:
       </p>
 
       <div className="space-y-1">
-        {calques.map((c) => (
+        {calques.filter((c) => c.nom !== "zones").map((c) => (
           <div
             key={c.nom}
             className={`flex items-center gap-2 px-2 py-1 rounded text-[0.78rem] cursor-pointer ${

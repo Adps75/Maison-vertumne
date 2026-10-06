@@ -57,7 +57,7 @@ export type Geometrie =
 
 // ===================== Élément =====================
 
-export type TypeElement = "sol" | "mineral" | "vegetal" | "bati" | "limite" | "cote" | "annotation";
+export type TypeElement = "sol" | "mineral" | "vegetal" | "bati" | "limite" | "cote" | "annotation" | "zone";
 export type StatutElement = "existant" | "conserve" | "nouveau" | "supprime";
 
 export interface Element {
@@ -95,7 +95,9 @@ export type NomOutil =
   | "copier"
   | "rotation"
   | "miroir"
-  | "mesurer";
+  | "mesurer"
+  | "zone_rectangle"
+  | "zone_polygone";
 
 // ===================== Accrochage =====================
 
@@ -122,10 +124,28 @@ export interface ChangementsEnAttente {
   suppressions: string[];
 }
 
+// ===================== Étapes du projet =====================
+
+export type NumeroEtape = 1 | 2 | 3 | 4 | 5 | 6;
+
+export const ETAPES_LABELS: Record<NumeroEtape, string> = {
+  1: "Adresse",
+  2: "Zones",
+  3: "Calques",
+  4: "Végétaux",
+  5: "Photos & 3D",
+  6: "Rendus",
+};
+
+/** Étapes déjà construites (accessibles). */
+export const ETAPES_ACTIVES: Set<NumeroEtape> = new Set([1, 2, 4]);
+
 // ===================== État éditeur =====================
 
 export interface EtatEditeur {
   outil: NomOutil;
+  etape: NumeroEtape;
+  zoneActive: string | null;
   elements: Map<string, Element>;
   selection: Set<string>;
   traceEnCours: Pt[];

@@ -3,11 +3,15 @@
 ## Objectif
 Outil de conception paysagère intégré à la plateforme Atelier des Prés, inspiré de SketchUp mais spécialisé paysage. Il permet de passer de la vue aérienne au plan, puis à la 3D, puis à des rendus de présentation client en plusieurs vues cohérentes. Principe clé : Adrien conçoit librement ; l'IA ne sert qu'à générer les végétaux et à finaliser les rendus. La 3D n'a pas besoin d'être belle, seulement juste (volumes, positions, hauteurs), car le rendu final est fait par l'IA.
 
-## Process utilisateur
-1. Import de la vue aérienne avec la limite cadastrale ; tracé du jardin et de la maison (manuel, ou automatique à valider).
-2. Plan : marquage des végétaux existants conservés, ajout des végétaux et matériaux avec des outils de tracé type AutoCAD et une bibliothèque en vue plan.
-3. Génération automatique de la 3D à partir du plan, puis calage des photos de points de vue prises au diagnostic.
-4. Choix du style de rendu (réaliste, dessin, aquarelle…), généré pour chaque vue.
+## Process utilisateur — 6 étapes
+1. **Adresse, vue aérienne** : adresse → parcelle cadastrale, orthophoto IGN, bâtiments BD TOPO à l'échelle. *(fait)*
+2. **Zones de travail** : une ou plusieurs zones nommées par projet. Chaque zone délimite une partie du jardin (terrasse, massif, allée…). Un bouton « Tout le jardin » crée une zone sur l'emprise de la parcelle. Les zones servent de cadrage pour la 3D et les rendus. *(fait)*
+3. **Calques, sous-calques et matériaux** : chaque matériau a une texture plan, une texture 3D, une description pour l'IA, et une épaisseur/hauteur pour la 3D.
+4. **Végétaux** : bibliothèque végétale IA (génération vue de face + de dessus) et placement à l'échelle sur le plan. *(fait)*
+5. **Photos, calage, visuel 3D** : chaque photo est rattachée à une zone ; calage par 4 points ; génération de la 3D automatique.
+6. **Rendus** : vues photo améliorées par l'IA (styles configurables), et rendu du plan.
+
+Navigation libre entre les étapes construites ; les étapes non construites sont visibles mais désactivées. Une coche indique les étapes qui contiennent déjà des données.
 
 ## Modules et solutions techniques
 - Parcelle : orthophoto IGN (Géoplateforme), contour via l'API Carto Cadastre, bâtiments + hauteurs via la BD TOPO (WFS). Données IGN en licence ouverte. Coordonnées en Lambert 93 (EPSG:2154, proj4) pour travailler en mètres.
@@ -20,9 +24,10 @@ Outil de conception paysagère intégré à la plateforme Atelier des Prés, ins
 
 ## Modèle de données
 - conception_projets { lead_id/client_id, parcelle_geojson, ortho_url, échelle }
-- conception_elements { type (sol|minéral|végétal|bâti), géométrie, materiau_id|plante_id, hauteur, statut (existant|conservé|nouveau) }
+- conception_elements { type (sol|minéral|végétal|bâti|limite|cote|annotation|**zone**), géométrie, materiau_id|plante_id, hauteur, statut, calque, propriétés }
+  - Les **zones** sont des éléments de type `zone` sur le calque système `zones` (non supprimable, exclu des rendus). Propriétés : `nom`, `ordre`. Bénéficient de l'historique, de la sauvegarde différentielle, des poignées et de l'accrochage.
 - plantes { nom_latin, hauteur_3ans, largeur, png_face, png_dessus, prix }
-- conception_points_de_vue { photo_url, points_calage[4], pose_camera }
+- conception_points_de_vue { photo_url, zone_id, points_calage[4], pose_camera }
 - conception_rendus { point_de_vue_id, style, image_url }
 
 ## Intégration dans la plateforme existante
@@ -32,15 +37,6 @@ Outil de conception paysagère intégré à la plateforme Atelier des Prés, ins
 - Un lead de l'estimateur s'ouvre en un clic dans le module, avec son adresse et ses photos.
 - Module détachable : aucune dépendance au site marketing, pour pouvoir le vendre plus tard en SaaS à d'autres paysagistes.
 
-## Feuille de route (avec validations)
-1. Parcelle : adresse → orthophoto + cadastre + maison BD TOPO à l'échelle. Validation : une distance mesurée correspond à Géoportail.
-2. Éditeur de plan + bibliothèque + quantités. Validation : un ancien projet redessiné plus vite que sur AutoCAD.
-3. Génération de plantes IA. Validation : 10 plantes dans un style cohérent.
-4. 3D automatique. Validation : hauteurs justes par rapport à la maison.
-5. Calage photo par 4 points. Validation : le bloc maison se superpose à la photo.
-6. Rendu IA multi-styles. Validation : 3 vues cohérentes d'un même projet.
-Priorité si arbitrage : étapes 1 à 3, qui font gagner du temps sur chaque conception même sans la 3D.
-
 ## Points de vigilance
 - Ne pas bloquer les premières ventes en attendant l'outil : présenter les premiers projets avec SketchUp ou des collages si besoin, et tester le module sur de vrais projets.
 - Visuels marqués « visuel d'ambiance non contractuel, végétaux à 2-3 ans ».
@@ -49,3 +45,4 @@ Priorité si arbitrage : étapes 1 à 3, qui font gagner du temps sur chaque con
 - Stack : la plateforme est en Next.js. Le module est intégré au même projet et à la même base Supabase (src/modules/conception et src/app/(app)/conception).
 - Pas de MapLibre : l'orthophoto est demandée en WMS directement en Lambert 93 (EPSG:2154), calée sur son emprise en mètres. Konva sert à la fois de fond de plan et d'éditeur, dans un seul repère en mètres (1 unité = 1 m).
 - Le module est un outil interne : accès réservé aux administrateurs connectés (Supabase Auth).
+- Les zones sont stockées comme des éléments ordinaires (type `zone`, calque `zones`), pas dans une table séparée. Elles bénéficient ainsi de l'historique (Cmd+Z), de la sauvegarde différentielle, des poignées et de l'accrochage, sans code supplémentaire.
