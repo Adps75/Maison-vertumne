@@ -73,6 +73,16 @@ export function extrairePoignees(el: Element): Poignee[] {
 
     case "point":
       poignees.push({ elementId: el.id, type: "centre", index: -1, point: geom.position });
+      // Végétaux : poignée de bord pour le diamètre
+      if (el.type === "vegetal" && el.proprietes?.diametre_m) {
+        const r = (el.proprietes.diametre_m as number) / 2;
+        poignees.push({
+          elementId: el.id,
+          type: "rayon",
+          index: 0,
+          point: [geom.position[0] + r, geom.position[1]],
+        });
+      }
       break;
   }
 
@@ -174,6 +184,8 @@ export function appliquerDeplacementPoignee(
       if (poignee.type === "centre") {
         return { ...geom, position: nouvPos };
       }
+      // Rayon d'un végétal → ne change pas la géométrie, seulement les propriétés
+      // (géré par appliquerDeplacementPoigneeVegetal)
       return geom;
     }
 
@@ -197,4 +209,15 @@ export function supprimerSommet(
   const pts = [...geom.points];
   pts.splice(index, 1);
   return { ...geom, points: pts };
+}
+
+/**
+ * Pour un végétal dont la poignée "rayon" est déplacée,
+ * renvoie le nouveau diamètre en mètres.
+ */
+export function calculerNouveauDiametre(
+  centre: Pt,
+  nouvPosPoignee: Pt,
+): number {
+  return Math.round(dist(centre, nouvPosPoignee) * 2 * 100) / 100;
 }

@@ -3,6 +3,7 @@ import type {
   Element,
   NomOutil,
   Calque,
+  PlanteSelectionnee,
   ActionHistorique,
   Geometrie,
   ChangementsEnAttente,
@@ -33,7 +34,8 @@ export type Action =
   | { type: "OPACITE_ORTHO"; opacite: number }
   | { type: "SAISIE"; texte: string }
   | { type: "CHARGER_ELEMENTS"; elements: Element[] }
-  | { type: "MARQUER_SAUVEGARDE" };
+  | { type: "MARQUER_SAUVEGARDE" }
+  | { type: "CHANGER_PLANTE"; plante: PlanteSelectionnee };
 
 // ===================== État initial =====================
 
@@ -49,6 +51,7 @@ export const CALQUES_DEFAUT: Calque[] = [
 export function etatInitial(): EtatEditeur {
   return {
     outil: "selection",
+    planteSelectionnee: null,
     elements: new Map(),
     selection: new Set(),
     traceEnCours: [],
@@ -284,7 +287,16 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
     }
 
     case "MARQUER_SAUVEGARDE":
-      return etat; // Pas de changement d'état visible
+      return etat;
+
+    case "CHANGER_PLANTE":
+      return {
+        ...etat,
+        outil: "planter",
+        planteSelectionnee: action.plante,
+        traceEnCours: [],
+        messageCommande: `PLA : cliquez pour poser ${action.plante.nom_commun}, Échap pour terminer`,
+      };
 
     default:
       return etat;
@@ -306,6 +318,7 @@ function messageOutil(outil: NomOutil): string {
     rotation: "RO : sélectionnez puis cliquez le centre de rotation",
     miroir: "MI : sélectionnez puis cliquez le premier point de l'axe",
     mesurer: "Cliquez deux points pour mesurer",
+    planter: "PLA : sélectionnez une plante dans le panneau Végétaux",
   };
   return messages[outil] ?? "Prêt";
 }

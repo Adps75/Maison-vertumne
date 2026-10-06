@@ -95,7 +95,8 @@ export type NomOutil =
   | "copier"
   | "rotation"
   | "miroir"
-  | "mesurer";
+  | "mesurer"
+  | "planter";
 
 // ===================== Accrochage =====================
 
@@ -122,10 +123,22 @@ export interface ChangementsEnAttente {
   suppressions: string[];
 }
 
+// ===================== Plante sélectionnée pour l'outil Planter =====================
+
+export interface PlanteSelectionnee {
+  id: string;
+  nom_commun: string;
+  nom_latin: string;
+  diametre_m: number;
+  hauteur_m: number;
+  version: string; // updated_at pour le cache d'image
+}
+
 // ===================== État éditeur =====================
 
 export interface EtatEditeur {
   outil: NomOutil;
+  planteSelectionnee: PlanteSelectionnee | null;
   elements: Map<string, Element>;
   selection: Set<string>;
   traceEnCours: Pt[];

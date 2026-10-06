@@ -29,6 +29,9 @@ import { deplacerGeometrie, copierGeometrie, rotationGeometrie, miroirGeometrie 
 import { dist as distPt } from "@/modules/conception/geo/plan";
 import type { Pt } from "@/modules/conception/geo/plan";
 import { hitTestGeometrique, elementSurvole, selectionParRectangle } from "@/modules/conception/editeur/selection";
+import { PanneauVegetaux } from "@/modules/conception/composants/PanneauVegetaux";
+import { PanneauListeVegetaux } from "@/modules/conception/composants/PanneauListeVegetaux";
+import { calculerNouveauDiametre } from "@/modules/conception/editeur/poignees";
 import {
   appliquerDeplacementPoignee,
   supprimerSommet,
@@ -527,6 +530,32 @@ export function PageProjetClient() {
           }
           break;
 
+        case "planter": {
+          if (!etat.planteSelectionnee) break;
+          const ps = etat.planteSelectionnee;
+          const element: Element = {
+            id: genererIdLocal(),
+            type: "vegetal",
+            geometrie: { type: "point", position: pt },
+            calque: "vegetal",
+            statut: "nouveau",
+            hauteur: ps.hauteur_m,
+            proprietes: {
+              plante_id: ps.id,
+              nom_commun: ps.nom_commun,
+              nom_latin: ps.nom_latin,
+              diametre_m: ps.diametre_m,
+              hauteur_m: ps.hauteur_m,
+              version: ps.version,
+              rotation: 0,
+            },
+            ordre: etat.elements.size,
+          };
+          dispatch({ type: "CREER_ELEMENT", element });
+          // L'outil reste actif pour poser d'autres plantes
+          break;
+        }
+
         case "mesurer":
           dispatch({ type: "AJOUTER_POINT", point: pt });
           break;
@@ -559,12 +588,24 @@ export function PageProjetClient() {
         const finalPt = curseurRef.current;
         const el = etat.elements.get(poigneeActive.elementId);
         if (el) {
-          const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
-          if (nouvelleGeom) {
+          // Cas spécial : poignée de rayon sur un végétal → modifier le diamètre
+          if (el.type === "vegetal" && poigneeActive.type === "rayon" && el.geometrie.type === "point") {
+            const nouvDiam = calculerNouveauDiametre(el.geometrie.position, finalPt);
             dispatch({
               type: "MODIFIER_ELEMENTS",
-              elements: [{ ...el, geometrie: nouvelleGeom }],
+              elements: [{
+                ...el,
+                proprietes: { ...el.proprietes, diametre_m: nouvDiam },
+              }],
             });
+          } else {
+            const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
+            if (nouvelleGeom) {
+              dispatch({
+                type: "MODIFIER_ELEMENTS",
+                elements: [{ ...el, geometrie: nouvelleGeom }],
+              });
+            }
           }
         }
         setPoigneeActive(null);
@@ -936,6 +977,16 @@ export function PageProjetClient() {
         />
 
         <PanneauInfos selection={selectionElements} />
+
+        <PanneauVegetaux
+          dispatch={dispatch}
+          planteActive={etat.planteSelectionnee}
+        />
+
+        <PanneauListeVegetaux
+          elements={etat.elements}
+          dispatch={dispatch}
+        />
 
         {surfaceParcelle != null && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-white/90 px-3 py-1.5 rounded text-[0.82rem] text-ink border border-hair-light">

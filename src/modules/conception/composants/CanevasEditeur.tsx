@@ -84,6 +84,9 @@ export function CanevasEditeur({
   const stageRef = useRef<Konva.Stage>(null);
   const [taille, setTaille] = useState({ w: 800, h: 600 });
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  // Cache d'images de plantes : clé = plante_id + version
+  const plantImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
@@ -337,8 +340,72 @@ export function CanevasEditeur({
             const hovered = survoleRef.current === el.id && !selected;
             const calqueColor = calqueCouleurMap.get(el.calque) ?? "#CCCCCC";
             const color = selected ? SELECTION : calqueColor;
-            // Épaisseurs constantes à l'écran (strokeScaleEnabled=false → valeurs en pixels écran)
             const strokeW = selected ? 4 : hovered ? 3 : 2;
+
+            // Végétaux : image de dessus à l'échelle réelle
+            if (el.type === "vegetal" && el.geometrie.type === "point") {
+              const diam = (el.proprietes?.diametre_m as number) ?? 1;
+              const pos = el.geometrie.position;
+              const ec = terrainVersEcran({ x: pos[0], y: pos[1] });
+              const cacheKey = `${el.proprietes?.plante_id}-${el.proprietes?.version}`;
+              let plantImg = plantImagesRef.current.get(cacheKey);
+
+              if (!plantImg && el.proprietes?.plante_id) {
+                // Charger l'image en arrière-plan
+                const img = new window.Image();
+                img.crossOrigin = "anonymous";
+                img.src = `/api/conception/plantes/${el.proprietes.plante_id}/image/dessus?v=${encodeURIComponent((el.proprietes.version as string) ?? "")}`;
+                img.onload = () => {
+                  plantImagesRef.current.set(cacheKey, img);
+                  // Force un re-render de la couche
+                  interactiveLayerRef.current?.batchDraw();
+                };
+                plantImagesRef.current.set(cacheKey, img); // Éviter de recharger
+              }
+
+              const halfD = diam / 2;
+              const rotation = (el.proprietes?.rotation as number) ?? 0;
+
+              return (
+                <Group key={el.id}>
+                  {plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (
+                    <KImage
+                      image={plantImg}
+                      x={ec.x - halfD}
+                      y={ec.y - halfD}
+                      width={diam}
+                      height={diam}
+                      rotation={rotation}
+                      offsetX={0}
+                      offsetY={0}
+                    />
+                  ) : (
+                    <Circle
+                      x={ec.x}
+                      y={ec.y}
+                      radius={halfD}
+                      fill={calqueColor + "44"}
+                      stroke={calqueColor}
+                      strokeWidth={strokeW}
+                      strokeScaleEnabled={false}
+                    />
+                  )}
+                  {/* Contour de sélection */}
+                  {selected && (
+                    <Circle
+                      x={ec.x}
+                      y={ec.y}
+                      radius={halfD}
+                      stroke={SELECTION}
+                      strokeWidth={3}
+                      strokeScaleEnabled={false}
+                      dash={[6, 4]}
+                    />
+                  )}
+                </Group>
+              );
+            }
+
             return renderElement(el, color, strokeW, zoom);
           })}
         </Layer>

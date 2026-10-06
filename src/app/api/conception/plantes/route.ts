@@ -9,9 +9,11 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from("plantes")
-      .select("id, nom_commun, nom_latin, categorie, forme, hauteur_adulte_m, largeur_adulte_m, image_face_path, image_dessus_path, statut, est_reference, cout_generation_total")
+      .select("id, nom_commun, nom_latin, categorie, forme, hauteur_adulte_m, largeur_adulte_m, image_face_path, image_dessus_path, statut, est_reference, cout_generation_total, updated_at")
       .order("nom_commun");
 
+    const statut = request.nextUrl.searchParams.get("statut");
+    if (statut) query = query.eq("statut", statut);
     if (categorie) query = query.eq("categorie", categorie);
     if (recherche) query = query.or(`nom_commun.ilike.%${recherche}%,nom_latin.ilike.%${recherche}%`);
 
