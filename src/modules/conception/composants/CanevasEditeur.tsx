@@ -21,6 +21,7 @@ import type { Element, Calque, NomOutil, Accrochage, NumeroEtape, PlanteSelectio
 import type { Pt } from "../geo/plan";
 import { surface as surfacePoly } from "../geo/plan";
 import { extrairePoignees, type Poignee } from "../editeur/poignees";
+import { deplacerGeometrie } from "../editeur/transformation";
 
 interface Batiment {
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
@@ -43,10 +44,13 @@ interface Props {
   accrochageRef: React.RefObject<Accrochage | null>;
   zoomRef: React.RefObject<number>;
   rectDebut: Pt | null;
-  onClicCanevas: (pt: Pt) => void;
-  onMouseMove: (pt: Pt) => void;
+  onPointerMove: (pt: Pt) => void;
+  onPointerDown: (pt: Pt) => void;
+  onPointerUp: (pt: Pt, altKey: boolean) => void;
   onContextMenu: (e: React.MouseEvent) => void;
-  onMouseUp: (pt: Pt) => void;
+  dragIdsRef: React.RefObject<Set<string> | null>;
+  dragDeltaRef: React.RefObject<Pt | null>;
+  dragAltRef: React.RefObject<boolean>;
   survoleRef: React.RefObject<string | null>;
   poigneeSurvoleRef: React.RefObject<Poignee | null>;
   poigneePreviewRef: React.RefObject<Pt | null>;
@@ -75,10 +79,13 @@ export function CanevasEditeur({
   accrochageRef,
   zoomRef,
   rectDebut,
-  onClicCanevas,
-  onMouseMove,
+  onPointerMove,
+  onPointerDown,
+  onPointerUp,
   onContextMenu,
-  onMouseUp,
+  dragIdsRef,
+  dragDeltaRef,
+  dragAltRef,
   survoleRef,
   poigneeSurvoleRef,
   poigneePreviewRef,
@@ -100,6 +107,9 @@ export function CanevasEditeur({
   // Couche interactive — redessinée via requestAnimationFrame
   const interactiveLayerRef = useRef<Konva.Layer>(null);
   const animFrameRef = useRef(0);
+
+  // Nœud Konva impératif pour l'aperçu plante (mis à jour par ref, pas par React)
+  const plantPreviewRef = useRef<Konva.Circle | null>(null);
 
   // Redimensionnement
   useEffect(() => {
@@ -206,47 +216,123 @@ export function CanevasEditeur({
     [zoom, position, zoomRef],
   );
 
-  // Mouvement souris
-  const onStageMouseMove = useCallback(
-    (e: Konva.KonvaEventObject<MouseEvent>) => {
-      const stage = stageRef.current;
-      if (!stage) return;
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
-
+  // Helper : convertir pointer position → terrain
+  const pointerVersTerrain = useCallback(
+    (pointer: { x: number; y: number }): Pt => {
       const terrain = ecranVersTerrain({
         x: (pointer.x - position.x) / zoom,
         y: (pointer.y - position.y) / zoom,
       });
+      return [terrain.x, terrain.y];
+    },
+    [position, zoom],
+  );
 
-      onMouseMove([terrain.x, terrain.y]);
+  // Convertir un événement DOM pointer en coordonnées terrain
+  const domPointerVersTerrain = useCallback(
+    (e: PointerEvent): Pt => {
+      const container = containerRef.current;
+      if (!container) return [0, 0];
+      const rect = container.getBoundingClientRect();
+      const canvasX = e.clientX - rect.left;
+      const canvasY = e.clientY - rect.top;
+      return pointerVersTerrain({ x: canvasX, y: canvasY });
+    },
+    [pointerVersTerrain],
+  );
+
+  // Attacher les pointer events au conteneur DOM (pas à Konva)
+  // Cela garantit la fiabilité sur tous les navigateurs (Safari, tactile, stylet)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // Empêcher les comportements par défaut du navigateur (scroll, zoom tactile)
+    container.style.touchAction = "none";
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      // Capturer le pointeur pour recevoir les events même hors du conteneur
+      container.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      onPointerDown(domPointerVersTerrain(e));
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      e.preventDefault();
+      const terrain = domPointerVersTerrain(e);
+      onPointerMove(terrain);
+
+      // Suivre la touche Alt pendant le drag
+      dragAltRef.current = e.altKey;
+
+      // Mettre à jour l'aperçu plante via le nœud Konva impératif
+      if (plantPreviewRef.current) {
+        const ec = terrainVersEcran({ x: terrain[0], y: terrain[1] });
+        plantPreviewRef.current.position({ x: ec.x, y: ec.y });
+      }
 
       // Redessiner la couche interactive
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = requestAnimationFrame(() => {
         interactiveLayerRef.current?.batchDraw();
       });
-    },
-    [position, zoom, onMouseMove],
-  );
+    };
 
-  // Clic
-  const onStageClick = useCallback(
-    (e: Konva.KonvaEventObject<MouseEvent>) => {
-      const stage = stageRef.current;
-      if (!stage) return;
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
+    const handlePointerUp = (e: PointerEvent) => {
+      container.releasePointerCapture(e.pointerId);
+      onPointerUp(domPointerVersTerrain(e), e.altKey);
+    };
 
-      const terrain = ecranVersTerrain({
-        x: (pointer.x - position.x) / zoom,
-        y: (pointer.y - position.y) / zoom,
+    container.addEventListener("pointerdown", handlePointerDown);
+    container.addEventListener("pointermove", handlePointerMove);
+    container.addEventListener("pointerup", handlePointerUp);
+
+    return () => {
+      container.removeEventListener("pointerdown", handlePointerDown);
+      container.removeEventListener("pointermove", handlePointerMove);
+      container.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [domPointerVersTerrain, onPointerDown, onPointerMove, onPointerUp]);
+
+  // Aperçu plante impératif : créer/détruire un nœud Konva Circle dans la couche interactive
+  useEffect(() => {
+    const layer = interactiveLayerRef.current;
+    if (!layer) return;
+
+    if (outil === "planter" && planteSelectionnee) {
+      const halfD = planteSelectionnee.diametre_m / 2;
+      // Créer le nœud une seule fois
+      const Konva = require("konva").default;
+      const circle = new Konva.Circle({
+        x: 0, y: 0,
+        radius: halfD,
+        fill: "rgba(64,216,112,0.25)",
+        stroke: "#40D870",
+        strokeWidth: 1.5,
+        strokeScaleEnabled: false,
+        dash: [6, 4],
+        listening: false,
+        opacity: 0.5,
       });
+      layer.add(circle);
+      plantPreviewRef.current = circle;
+      layer.batchDraw();
 
-      onClicCanevas([terrain.x, terrain.y]);
-    },
-    [position, zoom, onClicCanevas],
-  );
+      return () => {
+        circle.destroy();
+        plantPreviewRef.current = null;
+        layer.batchDraw();
+      };
+    } else {
+      // Pas d'aperçu — nettoyer si existant
+      if (plantPreviewRef.current) {
+        plantPreviewRef.current.destroy();
+        plantPreviewRef.current = null;
+        layer.batchDraw();
+      }
+    }
+  }, [outil, planteSelectionnee]);
 
   // Calques visibles
   const calqueVisible = new Set(calques.filter((c) => c.visible).map((c) => c.nom));
@@ -274,20 +360,7 @@ export function CanevasEditeur({
         y={position.y}
         draggable={false}
         onWheel={onWheel}
-        onClick={onStageClick}
-        onMouseMove={onStageMouseMove}
         onContextMenu={(e) => { e.evt.preventDefault(); }}
-        onMouseUp={(e) => {
-          const stage = stageRef.current;
-          if (!stage) return;
-          const pointer = stage.getPointerPosition();
-          if (!pointer) return;
-          const terrain = ecranVersTerrain({
-            x: (pointer.x - position.x) / zoom,
-            y: (pointer.y - position.y) / zoom,
-          });
-          onMouseUp([terrain.x, terrain.y]);
-        }}
       >
         {/* Couche statique — orthophoto, parcelle, bâtiments, éléments */}
         <Layer>
@@ -364,6 +437,10 @@ export function CanevasEditeur({
             const color = selected ? SELECTION : calqueColor;
             const strokeW = selected ? 4 : hovered ? 3 : 2;
 
+            // Atténuer les éléments en cours de glissement (25 %) — sauf copie (Alt)
+            const enDrag = dragIdsRef.current?.has(el.id) && dragDeltaRef.current;
+            const opaciteDrag = enDrag && !dragAltRef.current ? 0.25 : 1;
+
             // Végétaux : image de dessus à l'échelle réelle
             if (el.type === "vegetal" && el.geometrie.type === "point") {
               const diam = (el.proprietes?.diametre_m as number) ?? 1;
@@ -389,7 +466,7 @@ export function CanevasEditeur({
               const rotation = (el.proprietes?.rotation as number) ?? 0;
 
               return (
-                <Group key={el.id}>
+                <Group key={el.id} opacity={opaciteDrag}>
                   {plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (
                     <KImage
                       image={plantImg}
@@ -412,7 +489,6 @@ export function CanevasEditeur({
                       strokeScaleEnabled={false}
                     />
                   )}
-                  {/* Contour de sélection */}
                   {selected && (
                     <Circle
                       x={ec.x}
@@ -428,7 +504,7 @@ export function CanevasEditeur({
               );
             }
 
-            return renderElement(el, color, strokeW, zoom);
+            return renderElement(el, color, strokeW, zoom, undefined, opaciteDrag);
           })}
 
           {/* Zones de travail — contour pointillé laiton + nom au centroïde */}
@@ -614,49 +690,84 @@ export function CanevasEditeur({
             return symbols[acc.type] ?? null;
           })()}
 
-          {/* Aperçu plante sous le curseur (outil Planter) */}
-          {outil === "planter" && planteSelectionnee && (() => {
-            const cur = curseurRef.current ?? [0, 0];
-            const ec = terrainVersEcran({ x: cur[0], y: cur[1] });
-            const diam = planteSelectionnee.diametre_m;
-            const halfD = diam / 2;
-            const cacheKey = `${planteSelectionnee.id}-${planteSelectionnee.version}`;
-            const plantImg = plantImagesRef.current.get(cacheKey);
+          {/* Aperçu plante : nœud Konva impératif géré via useEffect ci-dessous */}
 
-            // Charger l'image si pas encore en cache
-            if (!plantImg) {
-              const img = new window.Image();
-              img.crossOrigin = "anonymous";
-              img.src = `/api/conception/plantes/${planteSelectionnee.id}/image/dessus?v=${encodeURIComponent(planteSelectionnee.version)}`;
-              img.onload = () => {
-                plantImagesRef.current.set(cacheKey, img);
-                interactiveLayerRef.current?.batchDraw();
-              };
-              plantImagesRef.current.set(cacheKey, img);
-            }
+          {/* Fantôme de glissement et distance */}
+          {dragIdsRef.current && dragDeltaRef.current && (() => {
+            const delta = dragDeltaRef.current!;
+            const ids = dragIdsRef.current!;
+            const d = dist([0, 0], delta);
+            const curEc = curseurRef.current ? terrainVersEcran({ x: curseurRef.current[0], y: curseurRef.current[1] }) : null;
 
-            return plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (
-              <KImage
-                image={plantImg}
-                x={ec.x - halfD}
-                y={ec.y - halfD}
-                width={diam}
-                height={diam}
-                opacity={0.5}
-                listening={false}
-              />
-            ) : (
-              <Circle
-                x={ec.x}
-                y={ec.y}
-                radius={halfD}
-                fill="rgba(64,216,112,0.25)"
-                stroke="#40D870"
-                strokeWidth={1.5}
-                strokeScaleEnabled={false}
-                dash={[6, 4]}
-                listening={false}
-              />
+            return (
+              <Group opacity={0.6}>
+                {Array.from(ids).map((id) => {
+                  const el = elements.get(id);
+                  if (!el) return null;
+                  const ghostGeom = deplacerGeometrie(el.geometrie, delta[0], delta[1]);
+                  const calqueColor = calqueCouleurMap.get(el.calque) ?? "#CCCCCC";
+
+                  // Végétaux : image de dessus ou disque
+                  if (el.type === "vegetal" && ghostGeom.type === "point") {
+                    const diam = (el.proprietes?.diametre_m as number) ?? 1;
+                    const halfD = diam / 2;
+                    const ec = terrainVersEcran({ x: ghostGeom.position[0], y: ghostGeom.position[1] });
+                    const cacheKey = `${el.proprietes?.plante_id}-${el.proprietes?.version}`;
+                    const plantImg = plantImagesRef.current.get(cacheKey);
+                    const rotation = (el.proprietes?.rotation as number) ?? 0;
+
+                    return (
+                      <Group key={`ghost-${id}`}>
+                        {plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (
+                          <KImage
+                            image={plantImg}
+                            x={ec.x - halfD}
+                            y={ec.y - halfD}
+                            width={diam}
+                            height={diam}
+                            rotation={rotation}
+                            listening={false}
+                          />
+                        ) : (
+                          <Circle
+                            x={ec.x}
+                            y={ec.y}
+                            radius={halfD}
+                            fill={calqueColor + "44"}
+                            stroke={calqueColor}
+                            strokeWidth={2}
+                            strokeScaleEnabled={false}
+                            listening={false}
+                          />
+                        )}
+                      </Group>
+                    );
+                  }
+
+                  // Autres éléments : rendu standard
+                  const ghostEl = { ...el, id: `ghost-${el.id}`, geometrie: ghostGeom };
+                  return renderElement(ghostEl, calqueColor, 2, zoom);
+                })}
+                {d > 0.1 && curEc && (
+                  <>
+                    <Rect
+                      x={curEc.x - 35 / zoom}
+                      y={curEc.y - 20 / zoom}
+                      width={70 / zoom}
+                      height={14 / zoom}
+                      fill="rgba(0,0,0,0.6)"
+                      cornerRadius={2 / zoom}
+                    />
+                    <Text
+                      x={curEc.x - 30 / zoom}
+                      y={curEc.y - 18 / zoom}
+                      text={`${d.toFixed(2)} m`}
+                      fontSize={11 / zoom}
+                      fill="#FFFFFF"
+                    />
+                  </>
+                )}
+              </Group>
             );
           })()}
 
@@ -736,14 +847,14 @@ export function CanevasEditeur({
   );
 }
 
-function renderElement(el: Element, color: string, sw: number, zoom: number, fillOpacityOverride?: number): React.ReactNode {
+function renderElement(el: Element, color: string, sw: number, zoom: number, fillOpacityOverride?: number, opacity = 1): React.ReactNode {
   const key = el.id;
   const lisereSw = sw + 2; // +1px de chaque côté
   const fillColor = color + "33"; // 20% opacity via hex alpha
 
   // Helper : trait avec liseré sombre
   const trait = (points: number[], closed = false, fill = false) => (
-    <Group key={key}>
+    <Group key={key} opacity={opacity}>
       {/* Liseré sombre */}
       <Line
         points={points}
@@ -817,7 +928,7 @@ function renderElement(el: Element, color: string, sw: number, zoom: number, fil
       const texte = d.toFixed(2).replace(".", ",") + " m";
 
       return (
-        <Group key={key}>
+        <Group key={key} opacity={opacity}>
           {/* Traits de rappel */}
           <Line points={[r1a.x, r1a.y, r1b.x, r1b.y]} stroke={color} strokeWidth={1} strokeScaleEnabled={false} />
           <Line points={[r2a.x, r2a.y, r2b.x, r2b.y]} stroke={color} strokeWidth={1} strokeScaleEnabled={false} />
@@ -852,7 +963,7 @@ function renderElement(el: Element, color: string, sw: number, zoom: number, fil
       const ec = terrainVersEcran({ x: el.geometrie.position[0], y: el.geometrie.position[1] });
       const texte = (el.proprietes?.texte as string) ?? "";
       return (
-        <Group key={key}>
+        <Group key={key} opacity={opacity}>
           <Circle x={ec.x} y={ec.y} radius={3 / zoom} fill={color} />
           {texte && (
             <>
