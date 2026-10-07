@@ -72,9 +72,23 @@ export function etatInitial(): EtatEditeur {
   };
 }
 
-// ===================== Historique (singleton partagé via closure) =====================
+// ===================== Historiques par étape =====================
 
-const historique = new Historique();
+const historiques = new Map<NumeroEtape, Historique>();
+
+function historiqueEtape(etape: NumeroEtape): Historique {
+  let h = historiques.get(etape);
+  if (!h) {
+    h = new Historique();
+    historiques.set(etape, h);
+  }
+  return h;
+}
+
+/** Réinitialise tous les historiques (changement de projet). */
+export function reinitialiserHistoriques() {
+  historiques.clear();
+}
 
 // Suivi des changements pour la sauvegarde différentielle
 let changements: ChangementsEnAttente = { upserts: [], suppressions: [] };
@@ -85,10 +99,6 @@ export function getChangements(): ChangementsEnAttente {
 
 export function viderChangements() {
   changements = { upserts: [], suppressions: [] };
-}
-
-export function getHistorique(): Historique {
-  return historique;
 }
 
 // ===================== Reducer =====================
@@ -128,7 +138,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       const elements = new Map(etat.elements);
       elements.set(action.element.id, action.element);
 
-      historique.push({
+      historiqueEtape(etat.etape).push({
         type: "creer",
         avant: [],
         apres: [action.element],
@@ -151,7 +161,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
         changements.upserts.push(el);
       }
 
-      historique.push({
+      historiqueEtape(etat.etape).push({
         type: "modifier",
         avant,
         apres: action.elements,
@@ -177,7 +187,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
         }
       }
 
-      historique.push({ type: "supprimer", avant, apres: [], suppressions: ids });
+      historiqueEtape(etat.etape).push({ type: "supprimer", avant, apres: [], suppressions: ids });
       changements.suppressions.push(...ids);
 
       return { ...etat, elements, selection: new Set() };
@@ -193,7 +203,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       return { ...etat, selection: new Set() };
 
     case "ANNULER": {
-      const action_hist = historique.annuler();
+      const action_hist = historiqueEtape(etat.etape).annuler();
       if (!action_hist) return etat;
 
       const elements = new Map(etat.elements);
@@ -232,7 +242,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
     }
 
     case "RETABLIR": {
-      const action_hist = historique.retablir();
+      const action_hist = historiqueEtape(etat.etape).retablir();
       if (!action_hist) return etat;
 
       const elements = new Map(etat.elements);
@@ -289,6 +299,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
     case "CHARGER_ELEMENTS": {
       const elements = new Map<string, Element>();
       for (const el of action.elements) elements.set(el.id, el);
+      reinitialiserHistoriques();
       return { ...etat, elements };
     }
 
@@ -316,7 +327,7 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       const elements = new Map(etat.elements);
       elements.set(action.id, modifie);
       changements.upserts.push(modifie);
-      historique.push({
+      historiqueEtape(etat.etape).push({
         type: "modifier",
         avant: [el],
         apres: [modifie],

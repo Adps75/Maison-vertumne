@@ -95,6 +95,17 @@ export function PageProjetClient() {
   const poigneeSurvoleRef = useRef<Poignee | null>(null);
   const poigneePreviewRef = useRef<Pt | null>(null); // Position actuelle de la poignée glissée
 
+
+  // Glisser-déposer
+  const pointerDownPtRef = useRef<Pt | null>(null); // Point de pointerdown
+  const pointerDownElementRef = useRef<string | null>(null); // ID de l'élément sous le pointerdown
+  const dragActiveRef = useRef(false);
+  const dragIdsRef = useRef<Set<string> | null>(null);
+  const dragBaseRef = useRef<Pt | null>(null); // Point de saisie
+  const dragDeltaRef = useRef<Pt | null>(null); // Delta courant
+  const dragAltRef = useRef(false); // Alt enfoncé pendant le drag
+  const SEUIL_DRAG = 3; // pixels écran
+
   // Phase des outils d'édition (AutoCAD)
   type PhaseEdition = "selection" | "base" | "destination";
   const [phaseEdition, setPhaseEdition] = useState<PhaseEdition>("selection");
@@ -168,6 +179,22 @@ export function PageProjetClient() {
     setRectDebut(null);
   }, [etat.outil]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Exposer l'état pour les tests E2E (dev/test uniquement)
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as Record<string, unknown>).__editeurTest = {
+        elements: etat.elements,
+        etape: etat.etape,
+        selection: etat.selection,
+      };
+    }
+    return () => {
+      if (process.env.NODE_ENV !== "production") {
+        delete (window as unknown as Record<string, unknown>).__editeurTest;
+      }
+    };
+  }, [etat.elements, etat.etape, etat.selection]);
+
   // Planifier la sauvegarde après chaque action qui modifie les éléments
   useEffect(() => {
     const c = getChangements();
@@ -196,14 +223,19 @@ export function PageProjetClient() {
     return rings[0]?.map(([x, y]) => [x, y] as Pt) ?? [];
   });
 
-  // Mouvement de la souris — met à jour les refs sans re-render
-  const onMouseMove = useCallback(
+  // Mouvement du pointeur — met à jour les refs sans re-render
+  const onPointerMoveHandler = useCallback(
     (terrainPt: Pt) => {
+
       let pt = terrainPt;
 
-      // Mode ortho
-      if (etat.modeOrtho && etat.traceEnCours.length > 0) {
-        pt = contrainteOrtho(etat.traceEnCours[etat.traceEnCours.length - 1], pt);
+      // Mode ortho (pendant le tracé ou le drag)
+      if (etat.modeOrtho) {
+        if (etat.traceEnCours.length > 0) {
+          pt = contrainteOrtho(etat.traceEnCours[etat.traceEnCours.length - 1], pt);
+        } else if (dragActiveRef.current && dragBaseRef.current) {
+          pt = contrainteOrtho(dragBaseRef.current, pt);
+        }
       }
 
       // Accrochage
@@ -222,10 +254,39 @@ export function PageProjetClient() {
 
       curseurRef.current = pt;
 
+      // Détection du seuil de drag (3 px) — pas pendant un tracé en cours
+      if (pointerDownPtRef.current && !dragActiveRef.current && !poigneeActive && !rectDebut && etat.traceEnCours.length === 0) {
+        const distPx = distPt(pointerDownPtRef.current, terrainPt) * zoomRef.current;
+        if (distPx > SEUIL_DRAG) {
+          const elId = pointerDownElementRef.current;
+          if (elId) {
+            // Démarrer le drag (fonctionne quel que soit l'outil actif)
+            dragActiveRef.current = true;
+            dragBaseRef.current = pointerDownPtRef.current;
+            if (etat.selection.has(elId)) {
+              dragIdsRef.current = new Set(etat.selection);
+            } else {
+              dragIdsRef.current = new Set([elId]);
+              dispatch({ type: "SELECTIONNER", ids: [elId] });
+            }
+            dragDeltaRef.current = [0, 0];
+          } else if (etat.outil === "selection") {
+            // Démarrer la sélection rectangle (uniquement en mode sélection)
+            setRectDebut(pointerDownPtRef.current);
+          }
+          pointerDownPtRef.current = null;
+        }
+      }
+
+      // Pendant un drag actif → mettre à jour le delta
+      if (dragActiveRef.current && dragBaseRef.current) {
+        dragDeltaRef.current = [pt[0] - dragBaseRef.current[0], pt[1] - dragBaseRef.current[1]];
+      }
+
       // Pendant un glissement de poignée → mettre à jour la preview
       if (poigneeActive) {
         poigneePreviewRef.current = pt;
-      } else if (etat.outil === "selection" && !rectDebut) {
+      } else if (etat.outil === "selection" && !rectDebut && !dragActiveRef.current) {
         // Détection du survol de poignée (prioritaire sur l'élément)
         const selectedEls = Array.from(etat.selection)
           .map((sid) => etat.elements.get(sid))
@@ -244,7 +305,44 @@ export function PageProjetClient() {
         }
       }
     },
-    [etat.accrochageActif, etat.modeOrtho, etat.traceEnCours, etat.elements, etat.calques, etat.outil, parcellePoints, batimentsPoints, rectDebut, poigneeActive],
+    [etat.accrochageActif, etat.modeOrtho, etat.traceEnCours, etat.elements, etat.calques, etat.outil, etat.selection, etat.etape, parcellePoints, batimentsPoints, rectDebut, poigneeActive],
+  );
+
+  // Pointer down — enregistre le point pour distinguer clic/drag
+  const onPointerDownHandler = useCallback(
+    (pt: Pt) => {
+
+
+      // Pas de drag pendant un tracé en cours
+      if (etat.traceEnCours.length > 0) {
+        pointerDownPtRef.current = pt;
+        pointerDownElementRef.current = null;
+        return;
+      }
+
+      // Tester si on est sur une poignée (priorité absolue)
+      if (etat.outil === "selection") {
+        const selectedEls = Array.from(etat.selection)
+          .map((sid) => etat.elements.get(sid))
+          .filter(Boolean) as Element[];
+        const toutesPoignees = selectedEls.flatMap((el) => extrairePoignees(el));
+        const poignee = trouverPoignee(pt, toutesPoignees, 8, zoomRef.current);
+        if (poignee) {
+          setPoigneeActive(poignee);
+          setSommetSelectionne({ elementId: poignee.elementId, index: poignee.index });
+          poigneePreviewRef.current = pt;
+          return;
+        }
+      }
+
+      // Tester si on est sur un élément sélectionnable (pour drag potentiel)
+      const elements = Array.from(etat.elements.values())
+        .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
+      const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
+      pointerDownPtRef.current = pt;
+      pointerDownElementRef.current = touche?.id ?? null;
+    },
+    [etat.outil, etat.selection, etat.elements, etat.calques, etat.etape],
   );
 
   // Clic sur le canevas
@@ -393,21 +491,8 @@ export function PageProjetClient() {
         }
 
         case "selection": {
-          // 1. Priorité aux poignées
-          const selectedEls = Array.from(etat.selection)
-            .map((sid) => etat.elements.get(sid))
-            .filter(Boolean) as Element[];
-          const toutesPoignees = selectedEls.flatMap((el) => extrairePoignees(el));
-          const poignee = trouverPoignee(pt, toutesPoignees, 8, zoomRef.current);
-
-          if (poignee) {
-            setPoigneeActive(poignee);
-            setSommetSelectionne({ elementId: poignee.elementId, index: poignee.index });
-            poigneePreviewRef.current = pt;
-            break;
-          }
-
-          // 2. Sélection d'élément (filtré par étape)
+          // Sélection d'élément (filtré par étape)
+          // Les poignées et le drag sont gérés par onPointerDown/Up
           const elements = Array.from(etat.elements.values())
             .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
           const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
@@ -415,7 +500,6 @@ export function PageProjetClient() {
             dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
           } else {
             dispatch({ type: "DESELECTIONNER" });
-            setRectDebut(pt);
           }
           break;
         }
@@ -634,31 +718,26 @@ export function PageProjetClient() {
     [etat.traceEnCours, creerElement],
   );
 
-  // Fin de sélection rectangle ou de glissement de poignée (mouseup)
-  const onMouseUp = useCallback(
-    (pt: Pt) => {
-      // Fin de glissement de poignée
+  // Pointer up — fin de glissement, drag, rectangle de sélection, ou clic
+  const onPointerUpHandler = useCallback(
+    (pt: Pt, altKey: boolean) => {
+
+      const finalPt = curseurRef.current;
+
+      // 1. Fin de glissement de poignée
       if (poigneeActive) {
-        const finalPt = curseurRef.current;
         const el = etat.elements.get(poigneeActive.elementId);
         if (el) {
-          // Cas spécial : poignée de rayon sur un végétal → modifier le diamètre
           if (el.type === "vegetal" && poigneeActive.type === "rayon" && el.geometrie.type === "point") {
             const nouvDiam = calculerNouveauDiametre(el.geometrie.position, finalPt);
             dispatch({
               type: "MODIFIER_ELEMENTS",
-              elements: [{
-                ...el,
-                proprietes: { ...el.proprietes, diametre_m: nouvDiam },
-              }],
+              elements: [{ ...el, proprietes: { ...el.proprietes, diametre_m: nouvDiam } }],
             });
           } else {
             const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
             if (nouvelleGeom) {
-              dispatch({
-                type: "MODIFIER_ELEMENTS",
-                elements: [{ ...el, geometrie: nouvelleGeom }],
-              });
+              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: nouvelleGeom }] });
             }
           }
         }
@@ -667,23 +746,69 @@ export function PageProjetClient() {
         return;
       }
 
-      if (!rectDebut || etat.outil !== "selection") return;
+      // 2. Fin de drag d'objets
+      if (dragActiveRef.current && dragIdsRef.current && dragDeltaRef.current) {
+        const delta = dragDeltaRef.current;
+        const ids = dragIdsRef.current;
+        if (Math.abs(delta[0]) > 0.001 || Math.abs(delta[1]) > 0.001) {
+          const modifies = Array.from(ids)
+            .map((sid) => etat.elements.get(sid))
+            .filter(Boolean) as Element[];
 
-      if (Math.abs(pt[0] - rectDebut[0]) < 0.5 && Math.abs(pt[1] - rectDebut[1]) < 0.5) {
-        setRectDebut(null);
+          if (altKey) {
+            // Copie : créer des copies aux nouvelles positions
+            modifies.forEach((el) => {
+              dispatch({
+                type: "CREER_ELEMENT",
+                element: {
+                  ...el,
+                  id: genererIdLocal(),
+                  geometrie: deplacerGeometrie(el.geometrie, delta[0], delta[1]),
+                },
+              });
+            });
+          } else {
+            // Déplacement
+            dispatch({
+              type: "MODIFIER_ELEMENTS",
+              elements: modifies.map((el) => ({
+                ...el,
+                geometrie: deplacerGeometrie(el.geometrie, delta[0], delta[1]),
+              })),
+            });
+          }
+        }
+        dragActiveRef.current = false;
+        dragIdsRef.current = null;
+        dragBaseRef.current = null;
+        dragDeltaRef.current = null;
+        pointerDownPtRef.current = null;
         return;
       }
 
-      const elements = Array.from(etat.elements.values())
-        .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
-      const ids = selectionParRectangle(rectDebut, pt, elements, etat.calques);
-
-      if (ids.length > 0) {
-        dispatch({ type: "SELECTIONNER", ids, ajouter: shiftKeyRef.current });
+      // 3. Fin de rectangle de sélection
+      if (rectDebut && etat.outil === "selection") {
+        if (Math.abs(pt[0] - rectDebut[0]) > 0.5 || Math.abs(pt[1] - rectDebut[1]) > 0.5) {
+          const elements = Array.from(etat.elements.values())
+            .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
+          const ids = selectionParRectangle(rectDebut, pt, elements, etat.calques);
+          if (ids.length > 0) {
+            dispatch({ type: "SELECTIONNER", ids, ajouter: shiftKeyRef.current });
+          }
+        }
+        setRectDebut(null);
+        pointerDownPtRef.current = null;
+        return;
       }
-      setRectDebut(null);
+
+      // 4. Clic simple (pointerdown sans drag)
+      if (pointerDownPtRef.current) {
+        onClicCanevas(finalPt);
+        pointerDownPtRef.current = null;
+        pointerDownElementRef.current = null;
+      }
     },
-    [rectDebut, etat.outil, etat.elements, etat.calques, poigneeActive],
+    [rectDebut, etat.outil, etat.elements, etat.calques, etat.etape, poigneeActive, onClicCanevas],
   );
 
   // Saisie Entrée/Espace
@@ -1119,10 +1244,13 @@ export function PageProjetClient() {
           accrochageRef={accrochageRef}
           zoomRef={zoomRef}
           rectDebut={rectDebut}
-          onClicCanevas={onClicCanevas}
-          onMouseMove={onMouseMove}
+          onPointerMove={onPointerMoveHandler}
+          onPointerDown={onPointerDownHandler}
+          onPointerUp={onPointerUpHandler}
           onContextMenu={onContextMenu}
-          onMouseUp={onMouseUp}
+          dragIdsRef={dragIdsRef}
+          dragDeltaRef={dragDeltaRef}
+          dragAltRef={dragAltRef}
           survoleRef={survoleRef}
           poigneeSurvoleRef={poigneeSurvoleRef}
           poigneePreviewRef={poigneePreviewRef}
@@ -1186,6 +1314,7 @@ export function PageProjetClient() {
           sauvegarde={sauvegarde}
         />
         <span data-testid="element-count" className="hidden">{etat.elements.size}</span>
+
       </div>
     </div>
   );
@@ -1243,3 +1372,4 @@ function calculerArcDepuis3Points(p1: Pt, p2: Pt, p3: Pt): Geometrie | null {
     angleFin: (angleFin + 360) % 360,
   };
 }
+
