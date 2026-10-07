@@ -1,12 +1,14 @@
 "use client";
 
-import type { NomOutil } from "../types";
+import type { NomOutil, NumeroEtape } from "../types";
+import { outilDisponibleAEtape } from "../types";
 import type { Action } from "../editeur/reducer";
 
 interface Props {
   outil: NomOutil;
   accrochage: boolean;
   ortho: boolean;
+  etape: NumeroEtape;
   dispatch: React.Dispatch<Action>;
 }
 
@@ -28,10 +30,13 @@ const EDITION: { nom: NomOutil; label: string; raccourci: string }[] = [
   { nom: "miroir", label: "Miroir", raccourci: "MI" },
 ];
 
-export function BarreOutils({ outil, accrochage, ortho, dispatch }: Props) {
+export function BarreOutils({ outil, accrochage, ortho, etape, dispatch }: Props) {
+  const outilsFiltres = OUTILS.filter((o) => outilDisponibleAEtape(o.nom, etape));
+  const editionFiltree = EDITION.filter((o) => outilDisponibleAEtape(o.nom, etape));
+
   return (
     <div className="absolute top-3 left-3 z-10 flex flex-col gap-1 bg-white/95 rounded shadow-sm border border-hair-light p-1.5">
-      {OUTILS.map((o) => (
+      {outilsFiltres.map((o) => (
         <button
           key={o.nom}
           onClick={() => dispatch({ type: "CHANGER_OUTIL", outil: o.nom })}
@@ -46,9 +51,9 @@ export function BarreOutils({ outil, accrochage, ortho, dispatch }: Props) {
         </button>
       ))}
 
-      <div className="border-t border-hair-light my-1" />
+      {editionFiltree.length > 0 && <div className="border-t border-hair-light my-1" />}
 
-      {EDITION.map((o) => (
+      {editionFiltree.map((o) => (
         <button
           key={o.nom}
           onClick={() => dispatch({ type: "CHANGER_OUTIL", outil: o.nom })}

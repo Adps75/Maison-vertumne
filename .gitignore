@@ -39,6 +39,9 @@ e2e/.auth/
 test-results/
 playwright-report/
 
+# supabase
+supabase/.temp/
+
 # vercel
 .vercel
 

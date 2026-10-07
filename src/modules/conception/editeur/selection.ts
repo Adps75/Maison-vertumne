@@ -57,20 +57,28 @@ function pointsDe(geom: Geometrie): Pt[] {
 }
 
 /** Calcule la surface d'un élément (pour départager : le plus petit gagne). */
-function surfaceDe(geom: Geometrie): number {
+function surfaceDe(el: Element): number {
+  const geom = el.geometrie;
   switch (geom.type) {
     case "polygone":
     case "rectangle":
       return surface(geom.points);
     case "cercle":
       return Math.PI * geom.rayon * geom.rayon;
+    case "point":
+      if (el.type === "vegetal" && el.proprietes?.diametre_m) {
+        const r = (el.proprietes.diametre_m as number) / 2;
+        return Math.PI * r * r;
+      }
+      return Infinity;
     default:
-      return Infinity; // Polylignes et points → "infini" (ne gagnent pas par taille)
+      return Infinity;
   }
 }
 
 /** Distance minimale du curseur à un élément (segments + intérieur). */
-function distanceAElement(curseur: Pt, geom: Geometrie): number {
+function distanceAElement(curseur: Pt, el: Element): number {
+  const geom = el.geometrie;
   // Point dans un polygone fermé → distance 0
   if (geom.type === "polygone" || geom.type === "rectangle") {
     if (pointDansPolygone(curseur, geom.points)) return 0;
@@ -88,9 +96,15 @@ function distanceAElement(curseur: Pt, geom: Geometrie): number {
     if (proj.distance < minDist) minDist = proj.distance;
   }
 
-  // Point isolé
+  // Point : pour les végétaux, utiliser le rayon de la couronne
   if (geom.type === "point") {
-    minDist = dist(curseur, geom.position);
+    const d = dist(curseur, geom.position);
+    if (el.type === "vegetal" && el.proprietes?.diametre_m) {
+      const rayon = (el.proprietes.diametre_m as number) / 2;
+      if (d <= rayon) return 0;
+      return d - rayon;
+    }
+    minDist = d;
   }
 
   return minDist;
@@ -117,12 +131,12 @@ export function hitTestGeometrique(
   for (const el of elements) {
     if (!calqueOk.has(el.calque)) continue;
 
-    const d = distanceAElement(curseur, el.geometrie);
+    const d = distanceAElement(curseur, el);
     if (d <= tolerance) {
       candidats.push({
         element: el,
         distance: d,
-        surface: surfaceDe(el.geometrie),
+        surface: surfaceDe(el),
       });
     }
   }

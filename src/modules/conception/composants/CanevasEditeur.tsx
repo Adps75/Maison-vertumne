@@ -17,7 +17,7 @@ import {
   dist,
   angleEntrePoints,
 } from "../geo/plan";
-import type { Element, Calque, NomOutil, Accrochage, NumeroEtape } from "../types";
+import type { Element, Calque, NomOutil, Accrochage, NumeroEtape, PlanteSelectionnee } from "../types";
 import type { Pt } from "../geo/plan";
 import { surface as surfacePoly } from "../geo/plan";
 import { extrairePoignees, type Poignee } from "../editeur/poignees";
@@ -53,6 +53,7 @@ interface Props {
   poigneeActive: Poignee | null;
   etape: NumeroEtape;
   zoneActive: string | null;
+  planteSelectionnee: PlanteSelectionnee | null;
 }
 
 const LAITON = "#9C7C3C";
@@ -84,11 +85,15 @@ export function CanevasEditeur({
   poigneeActive,
   etape,
   zoneActive,
+  planteSelectionnee,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [taille, setTaille] = useState({ w: 800, h: 600 });
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+
+  // Cache d'images de plantes : clé = plante_id + version
+  const plantImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
@@ -358,6 +363,71 @@ export function CanevasEditeur({
             const calqueColor = calqueCouleurMap.get(el.calque) ?? "#CCCCCC";
             const color = selected ? SELECTION : calqueColor;
             const strokeW = selected ? 4 : hovered ? 3 : 2;
+
+            // Végétaux : image de dessus à l'échelle réelle
+            if (el.type === "vegetal" && el.geometrie.type === "point") {
+              const diam = (el.proprietes?.diametre_m as number) ?? 1;
+              const pos = el.geometrie.position;
+              const ec = terrainVersEcran({ x: pos[0], y: pos[1] });
+              const cacheKey = `${el.proprietes?.plante_id}-${el.proprietes?.version}`;
+              let plantImg = plantImagesRef.current.get(cacheKey);
+
+              if (!plantImg && el.proprietes?.plante_id) {
+                // Charger l'image en arrière-plan
+                const img = new window.Image();
+                img.crossOrigin = "anonymous";
+                img.src = `/api/conception/plantes/${el.proprietes.plante_id}/image/dessus?v=${encodeURIComponent((el.proprietes.version as string) ?? "")}`;
+                img.onload = () => {
+                  plantImagesRef.current.set(cacheKey, img);
+                  // Force un re-render de la couche
+                  interactiveLayerRef.current?.batchDraw();
+                };
+                plantImagesRef.current.set(cacheKey, img); // Éviter de recharger
+              }
+
+              const halfD = diam / 2;
+              const rotation = (el.proprietes?.rotation as number) ?? 0;
+
+              return (
+                <Group key={el.id}>
+                  {plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (
+                    <KImage
+                      image={plantImg}
+                      x={ec.x - halfD}
+                      y={ec.y - halfD}
+                      width={diam}
+                      height={diam}
+                      rotation={rotation}
+                      offsetX={0}
+                      offsetY={0}
+                    />
+                  ) : (
+                    <Circle
+                      x={ec.x}
+                      y={ec.y}
+                      radius={halfD}
+                      fill={calqueColor + "44"}
+                      stroke={calqueColor}
+                      strokeWidth={strokeW}
+                      strokeScaleEnabled={false}
+                    />
+                  )}
+                  {/* Contour de sélection */}
+                  {selected && (
+                    <Circle
+                      x={ec.x}
+                      y={ec.y}
+                      radius={halfD}
+                      stroke={SELECTION}
+                      strokeWidth={3}
+                      strokeScaleEnabled={false}
+                      dash={[6, 4]}
+                    />
+                  )}
+                </Group>
+              );
+            }
+
             return renderElement(el, color, strokeW, zoom);
           })}
 
@@ -542,6 +612,52 @@ export function CanevasEditeur({
               centre: <Circle x={ec.x} y={ec.y} radius={r} stroke="#00cc44" strokeWidth={1.5 / zoom} dash={[3 / zoom, 3 / zoom]} />,
             };
             return symbols[acc.type] ?? null;
+          })()}
+
+          {/* Aperçu plante sous le curseur (outil Planter) */}
+          {outil === "planter" && planteSelectionnee && (() => {
+            const cur = curseurRef.current ?? [0, 0];
+            const ec = terrainVersEcran({ x: cur[0], y: cur[1] });
+            const diam = planteSelectionnee.diametre_m;
+            const halfD = diam / 2;
+            const cacheKey = `${planteSelectionnee.id}-${planteSelectionnee.version}`;
+            const plantImg = plantImagesRef.current.get(cacheKey);
+
+            // Charger l'image si pas encore en cache
+            if (!plantImg) {
+              const img = new window.Image();
+              img.crossOrigin = "anonymous";
+              img.src = `/api/conception/plantes/${planteSelectionnee.id}/image/dessus?v=${encodeURIComponent(planteSelectionnee.version)}`;
+              img.onload = () => {
+                plantImagesRef.current.set(cacheKey, img);
+                interactiveLayerRef.current?.batchDraw();
+              };
+              plantImagesRef.current.set(cacheKey, img);
+            }
+
+            return plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (
+              <KImage
+                image={plantImg}
+                x={ec.x - halfD}
+                y={ec.y - halfD}
+                width={diam}
+                height={diam}
+                opacity={0.5}
+                listening={false}
+              />
+            ) : (
+              <Circle
+                x={ec.x}
+                y={ec.y}
+                radius={halfD}
+                fill="rgba(64,216,112,0.25)"
+                stroke="#40D870"
+                strokeWidth={1.5}
+                strokeScaleEnabled={false}
+                dash={[6, 4]}
+                listening={false}
+              />
+            );
           })()}
 
           {/* Poignées des éléments sélectionnés (non interactives — hit-test géré par PageProjetClient) */}

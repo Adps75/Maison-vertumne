@@ -13,6 +13,7 @@ export const COMMANDES: Record<string, NomOutil> = {
   CO: "copier",
   RO: "rotation",
   MI: "miroir",
+  PLA: "planter",
 };
 
 /**

@@ -3,6 +3,7 @@ import type {
   Element,
   NomOutil,
   Calque,
+  PlanteSelectionnee,
   ActionHistorique,
   Geometrie,
   ChangementsEnAttente,
@@ -37,7 +38,8 @@ export type Action =
   | { type: "MARQUER_SAUVEGARDE" }
   | { type: "CHANGER_ETAPE"; etape: NumeroEtape }
   | { type: "ACTIVER_ZONE"; id: string | null }
-  | { type: "RENOMMER_ZONE"; id: string; nom: string };
+  | { type: "RENOMMER_ZONE"; id: string; nom: string }
+  | { type: "CHANGER_PLANTE"; plante: PlanteSelectionnee };
 
 // ===================== État initial =====================
 
@@ -54,8 +56,9 @@ export const CALQUES_DEFAUT: Calque[] = [
 export function etatInitial(): EtatEditeur {
   return {
     outil: "selection",
-    etape: 1,
+    etape: 3,
     zoneActive: null,
+    planteSelectionnee: null,
     elements: new Map(),
     selection: new Set(),
     traceEnCours: [],
@@ -221,7 +224,6 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       // Annuler les suppressions
       if (action_hist.type === "supprimer") {
         for (const id of action_hist.suppressions) {
-          // Retirer des suppressions en attente
           changements.suppressions = changements.suppressions.filter((s) => s !== id);
         }
       }
@@ -323,6 +325,15 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       return { ...etat, elements };
     }
 
+    case "CHANGER_PLANTE":
+      return {
+        ...etat,
+        outil: "planter",
+        planteSelectionnee: action.plante,
+        traceEnCours: [],
+        messageCommande: `PLA : cliquez pour poser ${action.plante.nom_commun}, Échap pour terminer`,
+      };
+
     default:
       return etat;
   }
@@ -343,6 +354,7 @@ function messageOutil(outil: NomOutil): string {
     rotation: "RO : sélectionnez puis cliquez le centre de rotation",
     miroir: "MI : sélectionnez puis cliquez le premier point de l'axe",
     mesurer: "Cliquez deux points pour mesurer",
+    planter: "PLA : sélectionnez une plante dans le panneau Végétaux",
     zone_rectangle: "Zone rectangle : cliquez le premier coin",
     zone_polygone: "Zone polygone : cliquez les sommets, Entrée pour terminer",
   };

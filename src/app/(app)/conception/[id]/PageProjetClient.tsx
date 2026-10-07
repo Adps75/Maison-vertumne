@@ -27,10 +27,14 @@ import { genererIdLocal } from "@/lib/id-client";
 import { ecranVersTerrain } from "@/modules/conception/geo/canevas";
 import { trouverAccrochage, contrainteOrtho } from "@/modules/conception/editeur/accrochage";
 import type { Element, Geometrie, NomOutil, Accrochage as AccrochageType, NumeroEtape } from "@/modules/conception/types";
+import { elementSelectionnableAEtape, outilDisponibleAEtape, etapePourOutil, ETAPES_LABELS } from "@/modules/conception/types";
 import { deplacerGeometrie, copierGeometrie, rotationGeometrie, miroirGeometrie } from "@/modules/conception/editeur/transformation";
 import { dist as distPt } from "@/modules/conception/geo/plan";
 import type { Pt } from "@/modules/conception/geo/plan";
 import { hitTestGeometrique, elementSurvole, selectionParRectangle } from "@/modules/conception/editeur/selection";
+import { PanneauVegetaux } from "@/modules/conception/composants/PanneauVegetaux";
+import { PanneauListeVegetaux } from "@/modules/conception/composants/PanneauListeVegetaux";
+import { calculerNouveauDiametre } from "@/modules/conception/editeur/poignees";
 import {
   appliquerDeplacementPoignee,
   supprimerSommet,
@@ -230,10 +234,10 @@ export function PageProjetClient() {
         const pSurvol = trouverPoignee(pt, toutesPoignees, 8, zoomRef.current);
         poigneeSurvoleRef.current = pSurvol;
 
-        // Survol d'élément (seulement si pas sur une poignée ; zones seulement à l'étape 2)
+        // Survol d'élément (seulement si pas sur une poignée ; filtré par étape)
         if (!pSurvol) {
           const elements = Array.from(etat.elements.values())
-            .filter((el) => el.type !== "zone" || etat.etape === 2);
+            .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
           survoleRef.current = elementSurvole(pt, elements, etat.calques, zoomRef.current);
         } else {
           survoleRef.current = null;
@@ -403,9 +407,9 @@ export function PageProjetClient() {
             break;
           }
 
-          // 2. Sélection d'élément (zones seulement à l'étape 2)
+          // 2. Sélection d'élément (filtré par étape)
           const elements = Array.from(etat.elements.values())
-            .filter((el) => el.type !== "zone" || etat.etape === 2);
+            .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
           const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
           if (touche) {
             dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
@@ -419,8 +423,8 @@ export function PageProjetClient() {
         case "deplacer":
         case "copier":
           if (phaseEdition === "selection") {
-            // Sélection par clic pendant la phase sélection
-            const elements = Array.from(etat.elements.values());
+            const elements = Array.from(etat.elements.values())
+              .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
             const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
             if (touche) dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
             break;
@@ -469,7 +473,8 @@ export function PageProjetClient() {
 
         case "rotation":
           if (phaseEdition === "selection") {
-            const elements = Array.from(etat.elements.values());
+            const elements = Array.from(etat.elements.values())
+              .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
             const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
             if (touche) dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
             break;
@@ -502,7 +507,8 @@ export function PageProjetClient() {
 
         case "miroir":
           if (phaseEdition === "selection") {
-            const elements = Array.from(etat.elements.values());
+            const elements = Array.from(etat.elements.values())
+              .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
             const touche = hitTestGeometrique(pt, elements, etat.calques, zoomRef.current);
             if (touche) dispatch({ type: "SELECTIONNER", ids: [touche.id], ajouter: shiftKeyRef.current });
             break;
@@ -530,6 +536,32 @@ export function PageProjetClient() {
             dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
           }
           break;
+
+        case "planter": {
+          if (!etat.planteSelectionnee) break;
+          const ps = etat.planteSelectionnee;
+          const element: Element = {
+            id: genererIdLocal(),
+            type: "vegetal",
+            geometrie: { type: "point", position: pt },
+            calque: "vegetal",
+            statut: "nouveau",
+            hauteur: ps.hauteur_m,
+            proprietes: {
+              plante_id: ps.id,
+              nom_commun: ps.nom_commun,
+              nom_latin: ps.nom_latin,
+              diametre_m: ps.diametre_m,
+              hauteur_m: ps.hauteur_m,
+              version: ps.version,
+              rotation: 0,
+            },
+            ordre: etat.elements.size,
+          };
+          dispatch({ type: "CREER_ELEMENT", element });
+          // L'outil reste actif pour poser d'autres plantes
+          break;
+        }
 
         case "mesurer":
           dispatch({ type: "AJOUTER_POINT", point: pt });
@@ -610,12 +642,24 @@ export function PageProjetClient() {
         const finalPt = curseurRef.current;
         const el = etat.elements.get(poigneeActive.elementId);
         if (el) {
-          const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
-          if (nouvelleGeom) {
+          // Cas spécial : poignée de rayon sur un végétal → modifier le diamètre
+          if (el.type === "vegetal" && poigneeActive.type === "rayon" && el.geometrie.type === "point") {
+            const nouvDiam = calculerNouveauDiametre(el.geometrie.position, finalPt);
             dispatch({
               type: "MODIFIER_ELEMENTS",
-              elements: [{ ...el, geometrie: nouvelleGeom }],
+              elements: [{
+                ...el,
+                proprietes: { ...el.proprietes, diametre_m: nouvDiam },
+              }],
             });
+          } else {
+            const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
+            if (nouvelleGeom) {
+              dispatch({
+                type: "MODIFIER_ELEMENTS",
+                elements: [{ ...el, geometrie: nouvelleGeom }],
+              });
+            }
           }
         }
         setPoigneeActive(null);
@@ -630,7 +674,8 @@ export function PageProjetClient() {
         return;
       }
 
-      const elements = Array.from(etat.elements.values());
+      const elements = Array.from(etat.elements.values())
+        .filter((el) => elementSelectionnableAEtape(el.type, etat.etape));
       const ids = selectionParRectangle(rectDebut, pt, elements, etat.calques);
 
       if (ids.length > 0) {
@@ -649,6 +694,15 @@ export function PageProjetClient() {
       // Commande ?
       if (COMMANDES[s]) {
         const outil = COMMANDES[s];
+        // Vérifier si l'outil est disponible à l'étape en cours
+        if (!outilDisponibleAEtape(outil, etat.etape)) {
+          const etapeOutil = etapePourOutil(outil);
+          const msg = etapeOutil
+            ? `Commande disponible à l'étape ${etapeOutil} (${ETAPES_LABELS[etapeOutil]})`
+            : "Commande non disponible";
+          dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: msg });
+          return;
+        }
         dispatch({ type: "CHANGER_OUTIL", outil });
         // Outils d'édition → démarrer en phase sélection
         if (["deplacer", "copier", "rotation", "miroir"].includes(outil)) {
@@ -1075,21 +1129,25 @@ export function PageProjetClient() {
           poigneeActive={poigneeActive}
           etape={etat.etape}
           zoneActive={etat.zoneActive}
+          planteSelectionnee={etat.planteSelectionnee}
         />
 
         <BarreOutils
           outil={etat.outil}
           accrochage={etat.accrochageActif}
           ortho={etat.modeOrtho}
+          etape={etat.etape}
           dispatch={dispatch}
         />
 
-        <PanneauCalques
-          calques={etat.calques}
-          calqueActif={etat.calqueActif}
-          opaciteOrtho={etat.opaciteOrtho}
-          dispatch={dispatch}
-        />
+        {etat.etape === 3 && (
+          <PanneauCalques
+            calques={etat.calques}
+            calqueActif={etat.calqueActif}
+            opaciteOrtho={etat.opaciteOrtho}
+            dispatch={dispatch}
+          />
+        )}
 
         <PanneauInfos selection={selectionElements} />
 
@@ -1101,6 +1159,19 @@ export function PageProjetClient() {
             onCadrerZone={cadrerSurZone}
             onToutLeJardin={toutLeJardin}
           />
+        )}
+
+        {etat.etape === 4 && (
+          <>
+            <PanneauVegetaux
+              dispatch={dispatch}
+              planteActive={etat.planteSelectionnee}
+            />
+            <PanneauListeVegetaux
+              elements={etat.elements}
+              dispatch={dispatch}
+            />
+          </>
         )}
 
         {surfaceParcelle != null && (

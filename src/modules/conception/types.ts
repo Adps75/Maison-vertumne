@@ -96,6 +96,7 @@ export type NomOutil =
   | "rotation"
   | "miroir"
   | "mesurer"
+  | "planter"
   | "zone_rectangle"
   | "zone_polygone";
 
@@ -124,6 +125,17 @@ export interface ChangementsEnAttente {
   suppressions: string[];
 }
 
+// ===================== Plante sélectionnée pour l'outil Planter =====================
+
+export interface PlanteSelectionnee {
+  id: string;
+  nom_commun: string;
+  nom_latin: string;
+  diametre_m: number;
+  hauteur_m: number;
+  version: string; // updated_at pour le cache d'image
+}
+
 // ===================== Étapes du projet =====================
 
 export type NumeroEtape = 1 | 2 | 3 | 4 | 5 | 6;
@@ -138,7 +150,47 @@ export const ETAPES_LABELS: Record<NumeroEtape, string> = {
 };
 
 /** Étapes déjà construites (accessibles). */
-export const ETAPES_ACTIVES: Set<NumeroEtape> = new Set([1, 2, 4]);
+export const ETAPES_ACTIVES: Set<NumeroEtape> = new Set([1, 2, 3, 4]);
+
+/** Types d'éléments sélectionnables/modifiables par étape. */
+const TYPES_PAR_ETAPE: Record<NumeroEtape, Set<TypeElement>> = {
+  1: new Set(),
+  2: new Set(["zone"]),
+  3: new Set(["sol", "mineral", "bati", "limite", "cote", "annotation"]),
+  4: new Set(["vegetal"]),
+  5: new Set(),
+  6: new Set(),
+};
+
+/** Vérifie si un élément est sélectionnable à l'étape donnée. */
+export function elementSelectionnableAEtape(type: TypeElement, etape: NumeroEtape): boolean {
+  return TYPES_PAR_ETAPE[etape]?.has(type) ?? false;
+}
+
+/** Outils disponibles par étape. */
+const OUTILS_PAR_ETAPE: Record<NumeroEtape, Set<NomOutil>> = {
+  1: new Set(["selection", "mesurer"]),
+  2: new Set(["selection", "mesurer", "zone_rectangle", "zone_polygone"]),
+  3: new Set(["selection", "polyligne", "polygone", "rectangle", "cercle", "arc", "cote", "texte", "deplacer", "copier", "rotation", "miroir", "mesurer"]),
+  4: new Set(["selection", "planter", "deplacer", "copier", "rotation", "miroir", "mesurer"]),
+  5: new Set(["selection", "mesurer"]),
+  6: new Set(["selection", "mesurer"]),
+};
+
+/** Vérifie si un outil est disponible à l'étape donnée. */
+export function outilDisponibleAEtape(outil: NomOutil, etape: NumeroEtape): boolean {
+  return OUTILS_PAR_ETAPE[etape]?.has(outil) ?? false;
+}
+
+/** Renvoie le numéro d'étape où un outil est disponible (pour le message d'erreur). */
+export function etapePourOutil(outil: NomOutil): NumeroEtape | null {
+  for (const [etape, outils] of Object.entries(OUTILS_PAR_ETAPE)) {
+    if (outils.has(outil) && outil !== "selection" && outil !== "mesurer") {
+      return parseInt(etape) as NumeroEtape;
+    }
+  }
+  return null;
+}
 
 // ===================== État éditeur =====================
 
@@ -146,6 +198,7 @@ export interface EtatEditeur {
   outil: NomOutil;
   etape: NumeroEtape;
   zoneActive: string | null;
+  planteSelectionnee: PlanteSelectionnee | null;
   elements: Map<string, Element>;
   selection: Set<string>;
   traceEnCours: Pt[];
