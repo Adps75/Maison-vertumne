@@ -85,6 +85,12 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
   différentielle, les poignées et l'accrochage sans code supplémentaire.
 - Le calque "zones" est non supprimable et exclu des rendus.
 
+## Tests
+- La config Playwright lit le port depuis la variable d'environnement PORT (défaut 3000).
+  Pour lancer les tests sur un autre port : `PORT=3001 npm run test:e2e`.
+- La vue 3D expose `window.__scene3dTest` en développement et test uniquement
+  (supprimé du build de production par dead-code elimination via le guard NODE_ENV).
+
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.
 - Une phase = une branche git + un commit final.
