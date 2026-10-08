@@ -21,6 +21,7 @@ export interface Scene3DTestData {
     id: string;
     position: [number, number];
     hauteur_m: number;
+    altitudeRelative: number;
   }[];
 }
 
@@ -48,6 +49,7 @@ export const Scene3D = forwardRef<Scene3DRef, Scene3DProps>(
           id: v.id,
           position: [v.position[0], v.position[1]] as [number, number],
           hauteur_m: v.hauteur_m,
+          altitudeRelative: v.altitudeRelative,
         })),
       };
       (window as unknown as Record<string, unknown>).__scene3dTest = testData;
@@ -83,22 +85,24 @@ export const Scene3D = forwardRef<Scene3DRef, Scene3DProps>(
         if (!controls) return;
 
         const e = donnees.emprise;
-        const [cx, , cz] = planVers3D(
-          (e[0] + e[2]) / 2,
-          (e[1] + e[3]) / 2,
-        );
+        const mx = (e[0] + e[2]) / 2;
+        const my = (e[1] + e[3]) / 2;
+        const [cx, , cz] = planVers3D(mx, my);
 
         // Placer la caméra au bord sud de l'emprise, à hauteur d'œil
-        const [bx, , bz] = planVers3D(
-          (e[0] + e[2]) / 2,
-          e[1],
-        );
+        const bx2d = (e[0] + e[2]) / 2;
+        const by2d = e[1];
+        const [bx, , bz] = planVers3D(bx2d, by2d);
 
-        controls.object.position.set(bx, 1.6, bz);
-        controls.target.set(cx, 1.6, cz);
+        // Altitude du terrain au point de la caméra et de la cible
+        const altCamera = donnees.altitudeEn ? donnees.altitudeEn(bx2d, by2d) : 0;
+        const altCible = donnees.altitudeEn ? donnees.altitudeEn(mx, my) : 0;
+
+        controls.object.position.set(bx, altCamera + 1.6, bz);
+        controls.target.set(cx, altCible + 1.6, cz);
         controls.update();
       },
-    }), [donnees.emprise]);
+    }), [donnees.emprise, donnees.altitudeEn]);
 
     return (
       <Canvas
@@ -118,9 +122,10 @@ export const Scene3D = forwardRef<Scene3DRef, Scene3DProps>(
             orthoUrl={donnees.orthoUrl}
             orthoEmprise={donnees.orthoEmprise}
             emprise={donnees.emprise}
+            altitudeEn={donnees.altitudeEn}
           />
-          <Batiments batiments={donnees.batiments} />
-          <SurfacesDessinee surfaces={donnees.surfaces} />
+          <Batiments batiments={donnees.batiments} altitudeEn={donnees.altitudeEn} />
+          <SurfacesDessinee surfaces={donnees.surfaces} altitudeEn={donnees.altitudeEn} />
           <Vegetaux vegetaux={donnees.vegetaux} />
           <OrbitControls
             ref={controlsRef}

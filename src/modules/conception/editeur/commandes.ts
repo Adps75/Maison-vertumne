@@ -14,10 +14,21 @@ export const COMMANDES: Record<string, NomOutil> = {
   RO: "rotation",
   MI: "miroir",
   PLA: "planter",
+  PC: "point_cote",
+  REF: "ref",
 };
 
 /**
+ * Normalise un nombre saisi : accepte la virgule comme séparateur décimal
+ * et le signe "+" explicite ("+0,45" → 0.45).
+ */
+export function normaliserNombre(s: string): number {
+  return parseFloat(s.replace(",", ".").replace(/^\+/, ""));
+}
+
+/**
  * Parse une saisie de longueur, avec option d'angle : "4.5" ou "4.5<30".
+ * Accepte la virgule décimale ("4,5") et le signe "+" ("+4.5").
  * Renvoie le point résultant depuis une base dans la direction du curseur,
  * ou dans l'angle spécifié.
  */
@@ -38,11 +49,11 @@ export function parseSaisie(
     return { point: base, type: "commande" };
   }
 
-  // Longueur + angle : "4.5<30"
-  const matchAngle = s.match(/^([\d.]+)<([\d.]+)$/);
+  // Longueur + angle : "4.5<30" ou "4,5<30"
+  const matchAngle = s.match(/^([+\-]?[\d.,]+)<([+\-]?[\d.,]+)$/);
   if (matchAngle) {
-    const longueur = parseFloat(matchAngle[1]);
-    const angle = parseFloat(matchAngle[2]);
+    const longueur = normaliserNombre(matchAngle[1]);
+    const angle = normaliserNombre(matchAngle[2]);
     if (isNaN(longueur) || isNaN(angle)) return null;
 
     const rad = (angle * Math.PI) / 180;
@@ -53,7 +64,7 @@ export function parseSaisie(
   }
 
   // Longueur seule : direction du curseur
-  const longueur = parseFloat(s);
+  const longueur = normaliserNombre(s);
   if (isNaN(longueur)) return null;
 
   const dx = curseur[0] - base[0];

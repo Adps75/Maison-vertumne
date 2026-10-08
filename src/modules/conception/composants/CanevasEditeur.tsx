@@ -58,6 +58,8 @@ interface Props {
   etape: NumeroEtape;
   zoneActive: string | null;
   planteSelectionnee: PlanteSelectionnee | null;
+  courbes?: { altitude: number; points: [number, number][] }[];
+  altRefPosition?: [number, number] | null;
 }
 
 const LAITON = "#9C7C3C";
@@ -93,6 +95,8 @@ export function CanevasEditeur({
   etape,
   zoneActive,
   planteSelectionnee,
+  courbes,
+  altRefPosition,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -836,6 +840,51 @@ export function CanevasEditeur({
             <Rect x={0} y={0} width={echellePx / zoom} height={4 / zoom} fill={VERT} />
             <Text x={0} y={-14 / zoom} text={`${echelleM} m`} fontSize={11 / zoom} fill={VERT} />
           </Group>
+          {/* Courbes de niveau */}
+          {courbes && courbes.map((c, ci) => {
+            const pts = c.points.flatMap(([x, y]) => {
+              const ec = terrainVersEcran({ x, y });
+              return [ec.x, ec.y];
+            });
+            if (pts.length < 4) return null;
+            const estMajeure = Math.abs(Math.round(c.altitude * 4) % 4) === 0; // tous les 1 m
+            return (
+              <Group key={`courbe-${ci}`}>
+                <Line
+                  points={pts}
+                  stroke="#8B6914"
+                  strokeWidth={(estMajeure ? 1.2 : 0.6) / zoom}
+                  opacity={0.6}
+                  strokeScaleEnabled={false}
+                  listening={false}
+                />
+                {estMajeure && pts.length >= 4 && (
+                  <Text
+                    x={pts[Math.floor(pts.length / 4) * 2 - 2]}
+                    y={pts[Math.floor(pts.length / 4) * 2 - 1]}
+                    text={(c.altitude >= 0 ? "+" : "") + c.altitude.toFixed(2).replace(".", ",")}
+                    fontSize={9 / zoom}
+                    fill="#8B6914"
+                    opacity={0.8}
+                  />
+                )}
+              </Group>
+            );
+          })}
+
+          {/* Repère 0,00 */}
+          {altRefPosition && (() => {
+            const ec = terrainVersEcran({ x: altRefPosition[0], y: altRefPosition[1] });
+            const s = 6 / zoom;
+            return (
+              <Group>
+                <Line points={[ec.x - s, ec.y, ec.x + s, ec.y, ec.x, ec.y - s * 1.5]} closed fill="#8B6914" opacity={0.8} />
+                <Text x={ec.x + 8 / zoom} y={ec.y - 6 / zoom} text="0,00" fontSize={10 / zoom} fill="#8B6914" fontStyle="bold" />
+              </Group>
+            );
+          })()}
+
+          {/* Boussole */}
           <Group x={(-position.x + taille.w - 40) / zoom} y={(-position.y + 60) / zoom}>
             <Line points={[0, 20 / zoom, 0, -15 / zoom]} stroke={VERT} strokeWidth={2 / zoom} />
             <Line points={[-5 / zoom, -8 / zoom, 0, -15 / zoom, 5 / zoom, -8 / zoom]} fill={VERT} closed />
@@ -961,6 +1010,40 @@ function renderElement(el: Element, color: string, sw: number, zoom: number, fil
 
     case "point": {
       const ec = terrainVersEcran({ x: el.geometrie.position[0], y: el.geometrie.position[1] });
+
+      // Point coté : croix + altitude relative
+      if (el.type === "point_cote") {
+        const alt = el.proprietes?.altitude_relative_m as number ?? 0;
+        const signe = alt >= 0 ? "+" : "";
+        const texte = `${signe}${alt.toFixed(2).replace(".", ",")}`;
+        const s = 5 / zoom; // demi-taille de la croix
+        return (
+          <Group key={key} opacity={opacity}>
+            {/* Croix */}
+            <Line points={[ec.x - s, ec.y, ec.x + s, ec.y]} stroke={color} strokeWidth={1.5} strokeScaleEnabled={false} />
+            <Line points={[ec.x, ec.y - s, ec.x, ec.y + s]} stroke={color} strokeWidth={1.5} strokeScaleEnabled={false} />
+            {/* Étiquette altitude */}
+            <Rect
+              x={ec.x + 7 / zoom}
+              y={ec.y - 8 / zoom}
+              width={(texte.length * 6.5) / zoom}
+              height={14 / zoom}
+              fill="rgba(255,255,255,0.9)"
+              cornerRadius={2 / zoom}
+            />
+            <Text
+              x={ec.x + 8 / zoom}
+              y={ec.y - 6 / zoom}
+              text={texte}
+              fontSize={11 / zoom}
+              fill={color}
+              fontStyle="bold"
+            />
+          </Group>
+        );
+      }
+
+      // Annotation classique
       const texte = (el.proprietes?.texte as string) ?? "";
       return (
         <Group key={key} opacity={opacity}>

@@ -57,7 +57,7 @@ export type Geometrie =
 
 // ===================== Élément =====================
 
-export type TypeElement = "sol" | "mineral" | "vegetal" | "bati" | "limite" | "cote" | "annotation" | "zone";
+export type TypeElement = "sol" | "mineral" | "vegetal" | "bati" | "limite" | "cote" | "annotation" | "zone" | "point_cote";
 export type StatutElement = "existant" | "conserve" | "nouveau" | "supprime";
 
 export interface Element {
@@ -98,7 +98,9 @@ export type NomOutil =
   | "mesurer"
   | "planter"
   | "zone_rectangle"
-  | "zone_polygone";
+  | "zone_polygone"
+  | "point_cote"
+  | "ref";
 
 // ===================== Accrochage =====================
 
@@ -156,7 +158,7 @@ export const ETAPES_ACTIVES: Set<NumeroEtape> = new Set([1, 2, 3, 4, 5]);
 const TYPES_PAR_ETAPE: Record<NumeroEtape, Set<TypeElement>> = {
   1: new Set(),
   2: new Set(["zone"]),
-  3: new Set(["sol", "mineral", "bati", "limite", "cote", "annotation"]),
+  3: new Set(["sol", "mineral", "bati", "limite", "cote", "annotation", "point_cote"]),
   4: new Set(["vegetal"]),
   5: new Set(),
   6: new Set(),
@@ -171,7 +173,7 @@ export function elementSelectionnableAEtape(type: TypeElement, etape: NumeroEtap
 const OUTILS_PAR_ETAPE: Record<NumeroEtape, Set<NomOutil>> = {
   1: new Set(["selection", "mesurer"]),
   2: new Set(["selection", "mesurer", "zone_rectangle", "zone_polygone"]),
-  3: new Set(["selection", "polyligne", "polygone", "rectangle", "cercle", "arc", "cote", "texte", "deplacer", "copier", "rotation", "miroir", "mesurer"]),
+  3: new Set(["selection", "polyligne", "polygone", "rectangle", "cercle", "arc", "cote", "texte", "deplacer", "copier", "rotation", "miroir", "mesurer", "point_cote", "ref"]),
   4: new Set(["selection", "planter", "deplacer", "copier", "rotation", "miroir", "mesurer"]),
   5: new Set(["selection", "mesurer"]),
   6: new Set(["selection", "mesurer"]),

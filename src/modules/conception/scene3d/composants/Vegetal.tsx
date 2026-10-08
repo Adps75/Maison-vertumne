@@ -42,11 +42,12 @@ function VegetalBillboard({ vegetal }: { vegetal: Vegetal3D }) {
     return vegetal.hauteur_m * ratio;
   }, [texture, vegetal.hauteur_m]);
 
-  // Position : base au sol, centré verticalement
+  // Position : base au sol (+ altitude terrain), centré verticalement
   const position = useMemo(() => {
     const [x, , z] = planVers3D(vegetal.position[0], vegetal.position[1]);
-    return new THREE.Vector3(x, vegetal.hauteur_m / 2, z);
-  }, [vegetal.position, vegetal.hauteur_m]);
+    const altitude = vegetal.altitudeRelative ?? 0;
+    return new THREE.Vector3(x, altitude + vegetal.hauteur_m / 2, z);
+  }, [vegetal.position, vegetal.hauteur_m, vegetal.altitudeRelative]);
 
   // Rotation verticale uniquement (axe Y) vers la caméra
   useFrame(({ camera }) => {

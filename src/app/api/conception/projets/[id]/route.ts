@@ -19,7 +19,7 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Projet introuvable." }, { status: 404 });
     }
 
-    // Signed URL pour l'orthophoto
+    // Signed URLs pour l'orthophoto et le relief
     let orthoUrl: string | null = null;
     if (projet.ortho_path) {
       const { data } = await supabase.storage
@@ -28,7 +28,18 @@ export async function GET(
       orthoUrl = data?.signedUrl ?? null;
     }
 
-    return NextResponse.json({ ok: true, projet: { ...projet, ortho_url: orthoUrl } });
+    let reliefUrl: string | null = null;
+    if (projet.relief_path && typeof projet.relief_path === "string") {
+      const { data } = await supabase.storage
+        .from("conception")
+        .createSignedUrl(projet.relief_path, 3600);
+      reliefUrl = data?.signedUrl ?? null;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      projet: { ...projet, ortho_url: orthoUrl, relief_url: reliefUrl },
+    });
   } catch (e) {
     if (e instanceof ErreurNonAutorise) {
       return NextResponse.json({ ok: false, error: e.message }, { status: e.status });

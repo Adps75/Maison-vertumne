@@ -38,5 +38,9 @@ export default defineConfig({
     port,
     reuseExistingServer: true,
     timeout: 30_000,
+    env: {
+      // Propager E2E_RELIEF_FIXTURE au serveur de dev si définie
+      ...(process.env.E2E_RELIEF_FIXTURE ? { E2E_RELIEF_FIXTURE: process.env.E2E_RELIEF_FIXTURE } : {}),
+    },
   },
 });

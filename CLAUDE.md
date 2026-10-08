@@ -84,12 +84,23 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
   pas une table séparée. Elles bénéficient de l'historique, la sauvegarde
   différentielle, les poignées et l'accrochage sans code supplémentaire.
 - Le calque "zones" est non supprimable et exclu des rendus.
+- Relief : grille d'altitudes IGN (LiDAR HD 50 cm via data.geopf.fr/altimetrie,
+  repli RGE ALTI), stockée dans le bucket conception. Altitude de référence (0,00)
+  dans conception_projets.altitude_reference_ngf. Points cotés de type "point_cote"
+  sur le calque système "topographie". Modèle de terrain dans
+  src/modules/conception/terrain/ (interpolation bilinéaire + Delaunay via delaunator).
+  Courbes de niveau par d3-contour. Variable E2E_RELIEF_FIXTURE=plan_incline pour
+  les tests (aucun appel IGN réel).
 
 ## Tests
 - La config Playwright lit le port depuis la variable d'environnement PORT (défaut 3000).
   Pour lancer les tests sur un autre port : `PORT=3001 npm run test:e2e`.
 - La vue 3D expose `window.__scene3dTest` en développement et test uniquement
   (supprimé du build de production par dead-code elimination via le guard NODE_ENV).
+
+## À faire
+- Remplacer le window.confirm de la commande REF (changement de référence 0,00)
+  par la boîte de dialogue à la charte (branche isolation et navigation).
 
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.
@@ -100,3 +111,13 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
   commandes simples, une à la fois, et expliquer ce qu'elles font.
 - Avant chaque proposition de commit : lancer npm test (Vitest) et npm run test:e2e
   (Playwright). Ne pas commiter si un test échoue.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

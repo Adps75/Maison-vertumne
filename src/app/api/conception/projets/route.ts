@@ -8,6 +8,7 @@ import {
 } from "@/modules/conception/geo/projection";
 import { recupererBatiments } from "@/modules/conception/serveur/batiments";
 import { recupererOrthophoto } from "@/modules/conception/serveur/orthophoto";
+import { recupererGrilleRelief, calculerAltitudeReference } from "@/modules/conception/serveur/relief";
 
 export async function GET() {
   try {
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
       yMax: ortho.emprise.yMax - origine.y,
     };
 
-    // 6. Créer le projet
+    // 6. Créer le projet (le relief est récupéré ensuite, en asynchrone)
     const { data: projet, error } = await supabase
       .from("conception_projets")
       .insert({
@@ -108,6 +109,22 @@ export async function POST(request: NextRequest) {
     if (error) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     }
+
+    // 7. Récupérer le relief en arrière-plan (ne bloque pas la réponse)
+    recupererGrilleRelief(emprise, 1, origine)
+      .then(async (grille) => {
+        if (!grille) return;
+        const rp = `projets/${projet.id}/relief.json`;
+        await supabase.storage
+          .from("conception")
+          .upload(rp, JSON.stringify(grille), { contentType: "application/json" });
+        const altRef = calculerAltitudeReference(grille, batiments);
+        await supabase
+          .from("conception_projets")
+          .update({ relief_path: rp, altitude_reference_ngf: altRef })
+          .eq("id", projet.id);
+      })
+      .catch((e) => console.warn("[conception/projets] relief en arrière-plan:", e));
 
     return NextResponse.json({ ok: true, id: projet.id });
   } catch (e) {

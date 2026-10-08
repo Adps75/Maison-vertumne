@@ -44,13 +44,14 @@ export type Action =
 // ===================== État initial =====================
 
 export const CALQUES_DEFAUT: Calque[] = [
-  { nom: "zones", visible: true, verrouille: false, couleur: "#9C7C3C" },         // Laiton (calque système)
-  { nom: "existant", visible: true, verrouille: false, couleur: "#E8E050" },       // Jaune vif
-  { nom: "sols", visible: true, verrouille: false, couleur: "#E07830" },           // Orange
-  { nom: "mineral", visible: true, verrouille: false, couleur: "#50B8E0" },        // Bleu clair
-  { nom: "vegetal", visible: true, verrouille: false, couleur: "#40D870" },         // Vert vif
-  { nom: "cotes", visible: true, verrouille: false, couleur: "#FF4040" },           // Rouge vif
-  { nom: "annotations", visible: true, verrouille: false, couleur: "#F0C040" },     // Or
+  { nom: "topographie", visible: true, verrouille: false, couleur: "#8B6914" },     // Brun doré (calque système)
+  { nom: "zones", visible: true, verrouille: false, couleur: "#9C7C3C" },           // Laiton (calque système)
+  { nom: "existant", visible: true, verrouille: false, couleur: "#E8E050" },         // Jaune vif
+  { nom: "sols", visible: true, verrouille: false, couleur: "#E07830" },             // Orange
+  { nom: "mineral", visible: true, verrouille: false, couleur: "#50B8E0" },          // Bleu clair
+  { nom: "vegetal", visible: true, verrouille: false, couleur: "#40D870" },           // Vert vif
+  { nom: "cotes", visible: true, verrouille: false, couleur: "#FF4040" },             // Rouge vif
+  { nom: "annotations", visible: true, verrouille: false, couleur: "#F0C040" },       // Or
 ];
 
 export function etatInitial(): EtatEditeur {
@@ -368,6 +369,8 @@ function messageOutil(outil: NomOutil): string {
     planter: "PLA : sélectionnez une plante dans le panneau Végétaux",
     zone_rectangle: "Zone rectangle : cliquez le premier coin",
     zone_polygone: "Zone polygone : cliquez les sommets, Entrée pour terminer",
+    point_cote: "PC : cliquez pour poser un point coté",
+    ref: "REF : cliquez pour définir le 0,00",
   };
   return messages[outil] ?? "Prêt";
 }

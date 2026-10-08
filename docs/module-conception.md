@@ -37,6 +37,14 @@ Navigation libre entre les étapes construites ; les étapes non construites son
 - Un lead de l'estimateur s'ouvre en un clic dans le module, avec son adresse et ses photos.
 - Module détachable : aucune dépendance au site marketing, pour pouvoir le vendre plus tard en SaaS à d'autres paysagistes.
 
+## Relief et topographie
+- **Grille d'altitudes IGN** : à la création du projet, les altitudes du terrain sont récupérées via le service d'altimétrie de la Géoplateforme (`ign_lidar_hd_mnt_mono_wld`, 50 cm, repli `ign_rge_alti_wld` si nécessaire). Grille au pas de 1 m, stockée dans le bucket `conception` en JSON. Interpolation bilinéaire.
+- **Altitude de référence (0,00)** : colonne `altitude_reference_ngf` sur `conception_projets`. Par défaut : altitude au point le plus proche du bâtiment principal. Modifiable via la commande REF (étape 3). Toutes les altitudes affichées sont relatives à cette référence.
+- **Points cotés** : éléments de type `point_cote`, calque système `topographie`, visibles à toutes les étapes, modifiables uniquement à l'étape 3. Commande PC : clic + saisie altitude relative au clavier. Propriété `altitude_relative_m`.
+- **Modèle de terrain** (`src/modules/conception/terrain/`) : fusionne la grille IGN et les écarts des points cotés par triangulation de Delaunay (librairie `delaunator`). Fondu linéaire hors enveloppe sur 5 m. Fonctions pures testées.
+- **Courbes de niveau** : calculées par l'algorithme des carrés marchants (`d3-contour`), intervalle 25 cm, affichées en 2D aux étapes 3-4.
+- **3D** : sol en maillage relief avec orthophoto drapée, végétaux et bâtiments posés à la bonne altitude, surfaces dessinées à hauteur moyenne + 2 cm.
+
 ## Points de vigilance
 - Ne pas bloquer les premières ventes en attendant l'outil : présenter les premiers projets avec SketchUp ou des collages si besoin, et tester le module sur de vrais projets.
 - Visuels marqués « visuel d'ambiance non contractuel, végétaux à 2-3 ans ».

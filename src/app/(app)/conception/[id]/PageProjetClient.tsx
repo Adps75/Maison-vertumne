@@ -6,6 +6,11 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { preparerDonneesScene, type ProjetPour3D } from "@/modules/conception/scene3d/preparer-donnees";
 import type { Scene3DRef } from "@/modules/conception/scene3d/composants/Scene3D";
+import { construireModele } from "@/modules/conception/terrain/modele";
+import { genererCourbes } from "@/modules/conception/terrain/courbes";
+import { normaliserNombre } from "@/modules/conception/editeur/commandes";
+import type { GrilleRelief, PointCote, CourbeDeNiveau } from "@/modules/conception/terrain/types";
+import { altitudeIGN } from "@/modules/conception/terrain/grille";
 import {
   reducer,
   etatInitial,
@@ -77,6 +82,9 @@ interface Projet {
   }[];
   ortho_url: string | null;
   ortho_emprise: [number, number, number, number] | null;
+  relief_url: string | null;
+  altitude_reference_ngf: number | null;
+  origine_l93: [number, number];
 }
 
 export function PageProjetClient() {
@@ -88,6 +96,13 @@ export function PageProjetClient() {
   const [sauvegarde, setSauvegarde] = useState<StatutSauvegarde>("sauvegarde");
   const [apercu3D, setApercu3D] = useState(false);
   const sceneRef = useRef<Scene3DRef>(null);
+
+  // Terrain / topographie
+  const [grilleRelief, setGrilleRelief] = useState<GrilleRelief | null>(null);
+  const [altRefNgf, setAltRefNgf] = useState<number | null>(null);
+  const [courbesVisibles, setCourbesVisibles] = useState(false);
+  const [pointCoteEnCours, setPointCoteEnCours] = useState<Pt | null>(null);
+  const [reliefChargement, setReliefChargement] = useState(false);
 
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
@@ -164,6 +179,14 @@ export function PageProjetClient() {
         if (projetData.ok) {
           setProjet(projetData.projet);
           setUpdatedAt(projetData.projet.updated_at);
+          setAltRefNgf(projetData.projet.altitude_reference_ngf ?? null);
+          // Charger la grille de relief si disponible
+          if (projetData.projet.relief_url) {
+            fetch(projetData.projet.relief_url)
+              .then((r) => r.json())
+              .then((g: GrilleRelief) => setGrilleRelief(g))
+              .catch(() => { /* relief indisponible — terrain plat */ });
+          }
         } else {
           setErreur(projetData.error);
         }
@@ -681,6 +704,49 @@ export function PageProjetClient() {
           dispatch({ type: "AJOUTER_POINT", point: pt });
           break;
 
+        case "point_cote": {
+          setPointCoteEnCours(pt);
+          dispatch({ type: "CHANGER_OUTIL", outil: "point_cote", message: "Altitude relative (ex : 0,45 ou -0,80)" });
+          break;
+        }
+
+        case "ref": {
+          // Définir le 0,00 ici : altitude IGN au point cliqué
+          if (grilleRelief) {
+            const zIGN = altitudeIGN(pt[0], pt[1], grilleRelief);
+            if (zIGN != null) {
+              const ancienRef = altRefNgf;
+              setAltRefNgf(zIGN);
+              // Mettre à jour côté serveur
+              fetch(`/api/conception/projets/${id}/relief`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ altitude_reference_ngf: zIGN }),
+              }).catch(() => {});
+              // Avertissement si des points cotés existent
+              if (pointsCotes.length > 0 && ancienRef != null) {
+                const garder = window.confirm(
+                  "Vos points cotés sont relatifs à l'ancienne référence. Les conserver tels quels ?",
+                );
+                if (!garder) {
+                  // Recalculer les altitudes relatives
+                  const delta = (ancienRef - zIGN);
+                  for (const el of etat.elements.values()) {
+                    if (el.type === "point_cote" && typeof el.proprietes.altitude_relative_m === "number") {
+                      dispatch({
+                        type: "MODIFIER_ELEMENTS",
+                        elements: [{ ...el, proprietes: { ...el.proprietes, altitude_relative_m: el.proprietes.altitude_relative_m + delta } }],
+                      });
+                    }
+                  }
+                }
+              }
+              dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: `Référence 0,00 définie (${zIGN.toFixed(2)} m NGF)` });
+            }
+          }
+          break;
+        }
+
         case "zone_rectangle":
           if (etat.traceEnCours.length === 0) {
             dispatch({ type: "AJOUTER_POINT", point: pt });
@@ -732,7 +798,8 @@ export function PageProjetClient() {
           break;
       }
     },
-    [etat.outil, etat.traceEnCours, etat.calqueActif, etat.elements, etat.selection, editBase, editAxeA],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [etat.outil, etat.traceEnCours, etat.calqueActif, etat.elements, etat.selection, editBase, editAxeA, grilleRelief, altRefNgf, id],
   );
 
   // (poignées gérées directement dans onClicCanevas / onMouseUp)
@@ -844,6 +911,29 @@ export function PageProjetClient() {
   // Saisie Entrée/Espace
   const onEntreeSaisie = useCallback(
     (texte: string) => {
+      // Saisie de l'altitude d'un point coté en cours
+      if (pointCoteEnCours) {
+        const val = normaliserNombre(texte.trim());
+        if (isNaN(val)) {
+          dispatch({ type: "CHANGER_OUTIL", outil: "point_cote", message: "Nombre invalide. Ex : 0,45 ou -0,80" });
+          return;
+        }
+        const element: Element = {
+          id: genererIdLocal(),
+          type: "point_cote",
+          geometrie: { type: "point", position: pointCoteEnCours },
+          calque: "topographie",
+          statut: "nouveau",
+          hauteur: null,
+          proprietes: { altitude_relative_m: val },
+          ordre: etat.elements.size,
+        };
+        dispatch({ type: "CREER_ELEMENT", element });
+        setPointCoteEnCours(null);
+        dispatch({ type: "CHANGER_OUTIL", outil: "point_cote", message: "Cliquer pour poser un point coté" });
+        return;
+      }
+
       const s = texte.trim().toUpperCase();
 
       // Commande ?
@@ -1005,7 +1095,7 @@ export function PageProjetClient() {
         dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
       }
     },
-    [etat.traceEnCours, etat.outil, etat.calqueActif, etat.elements, etat.selection, phaseEdition, editBase],
+    [etat.traceEnCours, etat.outil, etat.calqueActif, etat.elements, etat.selection, phaseEdition, editBase, pointCoteEnCours],
   );
 
   // Raccourcis clavier globaux — toutes les frappes passent par ici
@@ -1031,6 +1121,7 @@ export function PageProjetClient() {
         setPoigneeActive(null);
         setEditBase(null);
         setEditAxeA(null);
+        setPointCoteEnCours(null);
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
@@ -1100,6 +1191,58 @@ export function PageProjetClient() {
   const aZones = Array.from(etat.elements.values()).some((el) => el.type === "zone");
   const aVegetaux = Array.from(etat.elements.values()).some((el) => el.type === "vegetal");
 
+  // Modèle de terrain (grille IGN + points cotés)
+  const pointsCotes: PointCote[] = useMemo(() => {
+    const pcs: PointCote[] = [];
+    for (const el of etat.elements.values()) {
+      if (el.type === "point_cote" && el.geometrie.type === "point") {
+        const alt = el.proprietes.altitude_relative_m;
+        if (typeof alt === "number") {
+          pcs.push({ x: el.geometrie.position[0], y: el.geometrie.position[1], altitudeRelative: alt });
+        }
+      }
+    }
+    return pcs;
+  }, [etat.elements]);
+
+  const altitudeEn = useMemo(
+    () => construireModele(grilleRelief, pointsCotes, altRefNgf),
+    [grilleRelief, pointsCotes, altRefNgf],
+  );
+
+  // Courbes de niveau
+  const courbes: CourbeDeNiveau[] = useMemo(() => {
+    if (!courbesVisibles || !projet) return [];
+    // Emprise de la zone active ou parcelle
+    let emprise: [number, number, number, number] | null = null;
+    if (etat.zoneActive) {
+      const zone = etat.elements.get(etat.zoneActive);
+      if (zone && "points" in zone.geometrie) {
+        let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+        for (const [x, y] of zone.geometrie.points) {
+          if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+          if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+        }
+        emprise = [xMin, yMin, xMax, yMax];
+      }
+    }
+    if (!emprise && projet.parcelles_geojson) {
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      const rings = projet.parcelles_geojson.type === "MultiPolygon"
+        ? projet.parcelles_geojson.coordinates.flat(1)
+        : projet.parcelles_geojson.coordinates;
+      for (const ring of rings) {
+        for (const [x, y] of ring) {
+          if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+          if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+        }
+      }
+      emprise = [xMin, yMin, xMax, yMax];
+    }
+    if (!emprise) return [];
+    return genererCourbes(altitudeEn, emprise);
+  }, [courbesVisibles, altitudeEn, projet, etat.zoneActive, etat.elements]);
+
   // Préparer les données 3D (depuis l'état en mémoire, pas un fetch)
   const afficher3D = etat.etape === 5 || apercu3D;
   const donnees3D = useMemo(() => {
@@ -1111,8 +1254,12 @@ export function PageProjetClient() {
       ortho_emprise: projet.ortho_emprise,
     };
     const elementsArr = Array.from(etat.elements.values());
-    return preparerDonneesScene(projetPour3D, elementsArr, etat.zoneActive);
-  }, [afficher3D, projet, etat.elements, etat.zoneActive]);
+    const aRelief = grilleRelief || pointsCotes.length > 0;
+    return preparerDonneesScene(
+      projetPour3D, elementsArr, etat.zoneActive, undefined,
+      aRelief ? altitudeEn : null,
+    );
+  }, [afficher3D, projet, etat.elements, etat.zoneActive, grilleRelief, pointsCotes, altitudeEn]);
 
   // Cadrage sur une zone (marge 10 %)
   const cadrerSurZone = useCallback(
@@ -1313,6 +1460,7 @@ export function PageProjetClient() {
             etape={etat.etape}
             zoneActive={etat.zoneActive}
             planteSelectionnee={etat.planteSelectionnee}
+            courbes={courbes}
           />
         )}
 
@@ -1368,14 +1516,72 @@ export function PageProjetClient() {
               </>
             )}
 
-            {/* Bouton Aperçu 3D aux étapes 3 et 4 */}
+            {/* Boutons Aperçu 3D et Courbes de niveau aux étapes 3 et 4 */}
             {(etat.etape === 3 || etat.etape === 4) && (
+              <div className="absolute bottom-14 left-3 z-10 flex gap-2">
+                <button
+                  onClick={() => setApercu3D(true)}
+                  className="bg-stone-800 hover:bg-stone-700 text-stone-200 rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors"
+                  data-testid="btn-apercu-3d"
+                >
+                  Aperçu 3D
+                </button>
+                <button
+                  onClick={() => setCourbesVisibles((v) => !v)}
+                  className={`rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors ${
+                    courbesVisibles
+                      ? "bg-amber-700 text-amber-100"
+                      : "bg-stone-800 hover:bg-stone-700 text-stone-200"
+                  }`}
+                  data-testid="btn-courbes"
+                >
+                  Courbes de niveau
+                </button>
+                {etat.etape === 3 && grilleRelief && (
+                  <button
+                    onClick={() => {
+                      dispatch({ type: "CHANGER_OUTIL", outil: "ref", message: "Cliquez pour définir le 0,00" });
+                    }}
+                    className="bg-stone-800 hover:bg-stone-700 text-stone-200 rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors"
+                    data-testid="btn-ref"
+                  >
+                    Définir le 0,00 ici
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Bouton Mettre à jour le relief à l'étape 1 */}
+            {etat.etape === 1 && (
               <button
-                onClick={() => setApercu3D(true)}
-                className="absolute bottom-14 left-3 z-10 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors"
-                data-testid="btn-apercu-3d"
+                onClick={async () => {
+                  setReliefChargement(true);
+                  try {
+                    const res = await fetch(`/api/conception/projets/${id}/relief`, { method: "POST" });
+                    const data = await res.json();
+                    if (data.ok && data.relief_disponible) {
+                      setAltRefNgf(data.altitude_reference_ngf);
+                      // Recharger la grille
+                      const reliefRes = await fetch(`/api/conception/projets/${id}/relief`);
+                      const reliefData = await reliefRes.json();
+                      if (reliefData.relief_url) {
+                        const g = await fetch(reliefData.relief_url).then((r) => r.json());
+                        setGrilleRelief(g);
+                      }
+                    } else if (data.ok && !data.relief_disponible) {
+                      alert(data.message);
+                    }
+                  } catch {
+                    alert("Erreur lors de la récupération du relief.");
+                  } finally {
+                    setReliefChargement(false);
+                  }
+                }}
+                disabled={reliefChargement}
+                className="absolute bottom-14 left-3 z-10 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors disabled:opacity-50"
+                data-testid="btn-relief"
               >
-                Aperçu 3D
+                {reliefChargement ? "Chargement…" : "Mettre à jour le relief"}
               </button>
             )}
           </>

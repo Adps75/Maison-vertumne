@@ -22,6 +22,8 @@ export interface DonneesScene3D {
   surfaces: Surface3D[];
   /** Végétaux placés. */
   vegetaux: Vegetal3D[];
+  /** Fonction altitude relative en un point du plan. Null si pas de relief. */
+  altitudeEn: ((x: number, y: number) => number) | null;
 }
 
 export interface Surface3D {
@@ -46,4 +48,6 @@ export interface Vegetal3D {
   version: string;
   /** URL pré-calculée de l'image de face. */
   imageUrl: string;
+  /** Altitude relative au point de la plante (pour positionnement 3D). */
+  altitudeRelative: number;
 }

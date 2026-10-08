@@ -10,27 +10,49 @@ const COULEUR_BATIMENT = "#D0C8B8";
 
 interface BatimentProps {
   batiments: Batiment3D[];
+  altitudeEn?: ((x: number, y: number) => number) | null;
 }
 
 /** Bâtiments extrudés à leur hauteur BD TOPO. */
-export function Batiments({ batiments }: BatimentProps) {
+export function Batiments({ batiments, altitudeEn }: BatimentProps) {
   return (
     <>
       {batiments.map((bat, i) => (
-        <BatimentMesh key={bat.cleabs || i} batiment={bat} />
+        <BatimentMesh key={bat.cleabs || i} batiment={bat} altitudeEn={altitudeEn} />
       ))}
     </>
   );
 }
 
-function BatimentMesh({ batiment }: { batiment: Batiment3D }) {
+function BatimentMesh({
+  batiment,
+  altitudeEn,
+}: {
+  batiment: Batiment3D;
+  altitudeEn?: ((x: number, y: number) => number) | null;
+}) {
   const hauteur = batiment.hauteur ?? HAUTEUR_DEFAUT;
   const polygones = useMemo(() => extrairePolygones(batiment), [batiment]);
+
+  // Calculer l'altitude minimale sous l'empreinte du bâtiment
+  const minAltitude = useMemo(() => {
+    if (!altitudeEn) return 0;
+    let min = Infinity;
+    for (const rings of polygones) {
+      const outer = rings[0];
+      if (!outer) continue;
+      for (const [x, y] of outer) {
+        const alt = altitudeEn(x, y);
+        if (alt < min) min = alt;
+      }
+    }
+    return min === Infinity ? 0 : min;
+  }, [altitudeEn, polygones]);
 
   return (
     <>
       {polygones.map((rings, i) => (
-        <PolygoneExtrude key={i} rings={rings} hauteur={hauteur} />
+        <PolygoneExtrude key={i} rings={rings} hauteur={hauteur} minAltitude={minAltitude} />
       ))}
     </>
   );
@@ -39,9 +61,11 @@ function BatimentMesh({ batiment }: { batiment: Batiment3D }) {
 function PolygoneExtrude({
   rings,
   hauteur,
+  minAltitude = 0,
 }: {
   rings: Pt[][];
   hauteur: number;
+  minAltitude?: number;
 }) {
   const geometry = useMemo(() => {
     const outer = rings[0];
@@ -83,7 +107,7 @@ function PolygoneExtrude({
   // Après rotation -π/2 sur X : x reste, y_shape → -z, z_extrude → y.
   // Donc y_shape = y_plan donne z_three = -y_plan = -nord ✓, et l'extrusion monte ✓.
   return (
-    <mesh geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
+    <mesh geometry={geometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, minAltitude, 0]} castShadow receiveShadow>
       <meshStandardMaterial color={COULEUR_BATIMENT} />
     </mesh>
   );

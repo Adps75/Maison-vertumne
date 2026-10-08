@@ -40,6 +40,7 @@ export function preparerDonneesScene(
   elements: Element[],
   zoneId: string | null = null,
   couleursCalques?: Record<string, string>,
+  altitudeEn?: ((x: number, y: number) => number) | null,
 ): DonneesScene3D {
   const couleurs = { ...COULEURS_CALQUES, ...couleursCalques };
 
@@ -80,6 +81,7 @@ export function preparerDonneesScene(
             plante_id: planteId,
             version: version ?? "",
             imageUrl: `/api/conception/plantes/${planteId}/image/face?v=${encodeURIComponent(version ?? "")}`,
+            altitudeRelative: altitudeEn ? altitudeEn(pos[0], pos[1]) : 0,
           });
         }
       }
@@ -93,6 +95,7 @@ export function preparerDonneesScene(
     batiments,
     surfaces,
     vegetaux,
+    altitudeEn: altitudeEn ?? null,
   };
 }
 
