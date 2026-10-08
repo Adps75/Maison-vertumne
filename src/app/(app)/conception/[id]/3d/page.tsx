@@ -1,13 +1,12 @@
-import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { exigerAdmin } from "@/lib/auth/admin";
-import { Page3DClient } from "@/modules/conception/scene3d/composants/Page3DClient";
 
-export const metadata: Metadata = {
-  title: "Vue 3D — Atelier des Prés",
-  robots: { index: false, follow: false },
-};
-
-export default async function Page3D() {
+export default async function Page3D({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   await exigerAdmin("page");
-  return <Page3DClient />;
+  const { id } = await params;
+  redirect(`/conception/${id}?etape=5`);
 }

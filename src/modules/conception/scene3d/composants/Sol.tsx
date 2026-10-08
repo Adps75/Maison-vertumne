@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import { useLoader } from "@react-three/fiber";
 import * as THREE from "three";
 import { planVers3D } from "../conversion";
+import { garderImageEnCache } from "../cache-textures";
 
 interface SolProps {
   orthoUrl: string | null;
@@ -27,6 +28,13 @@ function SolTexture({
   orthoEmprise: [number, number, number, number];
 }) {
   const texture = useLoader(THREE.TextureLoader, orthoUrl);
+
+  // Garder l'image en cache mémoire pour éviter un retéléchargement
+  useEffect(() => {
+    if (texture.image instanceof HTMLImageElement) {
+      garderImageEnCache(orthoUrl, texture.image);
+    }
+  }, [texture, orthoUrl]);
 
   const [cx, cy, cz] = useMemo(() => {
     const mx = (orthoEmprise[0] + orthoEmprise[2]) / 2;

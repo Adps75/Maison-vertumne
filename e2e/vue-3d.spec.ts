@@ -1,5 +1,5 @@
 /**
- * Tests E2E de la vue 3D.
+ * Tests E2E de la vue 3D (étape 5).
  *
  * Crée un projet de test avec un bâtiment (fourni par BD TOPO) et un végétal
  * de 1,20 m, puis vérifie que window.__scene3dTest expose les bonnes données.
@@ -109,10 +109,12 @@ test.describe.serial("Vue 3D", () => {
     expect(response.ok(), `Ajout végétal échoué : ${await response.text()}`).toBeTruthy();
   });
 
-  test("la scène 3D contient 1 bâtiment et 1 végétal de 1,20 m", async ({ page }) => {
+  test("la scène 3D à l'étape 5 contient 1 bâtiment et 1 végétal de 1,20 m", async ({ page }) => {
     expect(projetId).toBeTruthy();
 
+    // /3d redirige vers ?etape=5
     await page.goto(`/conception/${projetId}/3d`);
+    await page.waitForURL(`**/conception/${projetId}?etape=5`, { timeout: 10000 });
 
     // Attendre que le canvas 3D soit visible
     const conteneur = page.locator("[data-testid='conteneur-3d']");
@@ -141,18 +143,10 @@ test.describe.serial("Vue 3D", () => {
     expect(data.vegetaux[0].hauteur_m).toBe(PLANTE_HAUTEUR);
     expect(data.vegetaux[0].position[0]).toBe(PLANTE_POSITION[0]);
     expect(data.vegetaux[0].position[1]).toBe(PLANTE_POSITION[1]);
-  });
 
-  test("les contrôles sont visibles", async ({ page }) => {
-    expect(projetId).toBeTruthy();
-
-    await page.goto(`/conception/${projetId}/3d`);
-
-    const retour = page.locator("a", { hasText: "Retour au plan" });
-    await expect(retour).toBeVisible({ timeout: 10000 });
-
+    // Le bouton vue piéton doit être visible
     const vuePieton = page.locator("[data-testid='btn-vue-pieton']");
-    await expect(vuePieton).toBeVisible();
+    await expect(vuePieton).toBeVisible({ timeout: 5000 });
   });
 
   test("teardown : supprimer le projet E2E", async ({ page }) => {

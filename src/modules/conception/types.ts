@@ -150,7 +150,7 @@ export const ETAPES_LABELS: Record<NumeroEtape, string> = {
 };
 
 /** Étapes déjà construites (accessibles). */
-export const ETAPES_ACTIVES: Set<NumeroEtape> = new Set([1, 2, 3, 4]);
+export const ETAPES_ACTIVES: Set<NumeroEtape> = new Set([1, 2, 3, 4, 5]);
 
 /** Types d'éléments sélectionnables/modifiables par étape. */
 const TYPES_PAR_ETAPE: Record<NumeroEtape, Set<TypeElement>> = {

@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState, useReducer, useCallback, useRef } from "react";
+import { useEffect, useState, useReducer, useCallback, useRef, useMemo } from "react";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { preparerDonneesScene, type ProjetPour3D } from "@/modules/conception/scene3d/preparer-donnees";
+import type { Scene3DRef } from "@/modules/conception/scene3d/composants/Scene3D";
 import {
   reducer,
   etatInitial,
@@ -51,6 +53,18 @@ const CanevasEditeur = dynamic(
   { ssr: false, loading: () => <div className="w-full h-full bg-paper-2 animate-pulse" /> },
 );
 
+const Scene3DDynamic = dynamic(
+  () => import("@/modules/conception/scene3d/composants/Scene3D").then((m) => m.Scene3D),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full bg-stone-900 flex items-center justify-center text-stone-400">
+        Chargement de la vue 3D…
+      </div>
+    ),
+  },
+);
+
 interface Projet {
   id: string;
   nom: string;
@@ -72,6 +86,8 @@ export function PageProjetClient() {
   const [erreur, setErreur] = useState<string | null>(null);
   const [etat, dispatch] = useReducer(reducer, undefined, etatInitial);
   const [sauvegarde, setSauvegarde] = useState<StatutSauvegarde>("sauvegarde");
+  const [apercu3D, setApercu3D] = useState(false);
+  const sceneRef = useRef<Scene3DRef>(null);
 
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
@@ -158,6 +174,20 @@ export function PageProjetClient() {
       .catch(() => setErreur("Impossible de charger le projet."))
       .finally(() => setChargement(false));
   }, [id]);
+
+  // Lire le paramètre ?etape= de l'URL (redirection depuis /3d)
+  // Déclenché après le chargement du projet pour que les données soient disponibles
+  useEffect(() => {
+    if (!projet) return;
+    const params = new URLSearchParams(window.location.search);
+    const etapeParam = params.get("etape");
+    if (etapeParam) {
+      const n = parseInt(etapeParam) as NumeroEtape;
+      if ([1, 2, 3, 4, 5, 6].includes(n)) {
+        dispatch({ type: "CHANGER_ETAPE", etape: n });
+      }
+    }
+  }, [projet]);
 
   // Garder saisieRef en sync
   useEffect(() => { saisieRef.current = etat.saisie; }, [etat.saisie]);
@@ -979,8 +1009,17 @@ export function PageProjetClient() {
   );
 
   // Raccourcis clavier globaux — toutes les frappes passent par ici
+  // Suspendus pendant l'aperçu 3D ou à l'étape 5 (sauf Échap)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // 3D ouverte : seul Échap ferme l'aperçu
+      if (apercu3D) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setApercu3D(false);
+        }
+        return;
+      }
       // Ne pas intercepter si on est dans un vrai champ texte (formulaire, panneau)
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -1044,7 +1083,7 @@ export function PageProjetClient() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [etat.saisie, etat.elements, sommetSelectionne, onEntreeSaisie]);
+  }, [etat.saisie, etat.elements, sommetSelectionne, onEntreeSaisie, apercu3D]);
 
   // Sélection comme tableau d'éléments pour PanneauInfos
   const selectionElements = Array.from(etat.selection)
@@ -1060,6 +1099,20 @@ export function PageProjetClient() {
   // Indicateurs pour BarreEtapes
   const aZones = Array.from(etat.elements.values()).some((el) => el.type === "zone");
   const aVegetaux = Array.from(etat.elements.values()).some((el) => el.type === "vegetal");
+
+  // Préparer les données 3D (depuis l'état en mémoire, pas un fetch)
+  const afficher3D = etat.etape === 5 || apercu3D;
+  const donnees3D = useMemo(() => {
+    if (!afficher3D || !projet) return null;
+    const projetPour3D: ProjetPour3D = {
+      parcelles_geojson: projet.parcelles_geojson as unknown as ProjetPour3D["parcelles_geojson"],
+      batiments_geojson: projet.batiments_geojson ?? [],
+      ortho_url: projet.ortho_url,
+      ortho_emprise: projet.ortho_emprise,
+    };
+    const elementsArr = Array.from(etat.elements.values());
+    return preparerDonneesScene(projetPour3D, elementsArr, etat.zoneActive);
+  }, [afficher3D, projet, etat.elements, etat.zoneActive]);
 
   // Cadrage sur une zone (marge 10 %)
   const cadrerSurZone = useCallback(
@@ -1229,92 +1282,157 @@ export function PageProjetClient() {
         dispatch={dispatch}
       />
       <div className="flex-1 relative overflow-hidden" data-testid="canevas-container">
-        <CanevasEditeur
-          parcelles={projet.parcelles_geojson}
-          batiments={projet.batiments_geojson ?? []}
-          orthoUrl={projet.ortho_url}
-          orthoEmprise={projet.ortho_emprise}
-          opaciteOrtho={etat.opaciteOrtho}
-          elements={etat.elements}
-          selection={etat.selection}
-          calques={etat.calques}
-          traceEnCours={etat.traceEnCours}
-          outil={etat.outil}
-          curseurRef={curseurRef}
-          accrochageRef={accrochageRef}
-          zoomRef={zoomRef}
-          rectDebut={rectDebut}
-          onPointerMove={onPointerMoveHandler}
-          onPointerDown={onPointerDownHandler}
-          onPointerUp={onPointerUpHandler}
-          onContextMenu={onContextMenu}
-          dragIdsRef={dragIdsRef}
-          dragDeltaRef={dragDeltaRef}
-          dragAltRef={dragAltRef}
-          survoleRef={survoleRef}
-          poigneeSurvoleRef={poigneeSurvoleRef}
-          poigneePreviewRef={poigneePreviewRef}
-          poigneeActive={poigneeActive}
-          etape={etat.etape}
-          zoneActive={etat.zoneActive}
-          planteSelectionnee={etat.planteSelectionnee}
-        />
-
-        <BarreOutils
-          outil={etat.outil}
-          accrochage={etat.accrochageActif}
-          ortho={etat.modeOrtho}
-          etape={etat.etape}
-          dispatch={dispatch}
-        />
-
-        {etat.etape === 3 && (
-          <PanneauCalques
-            calques={etat.calques}
-            calqueActif={etat.calqueActif}
+        {/* Éditeur 2D (masqué à l'étape 5, présent en mémoire) */}
+        {etat.etape !== 5 && (
+          <CanevasEditeur
+            parcelles={projet.parcelles_geojson}
+            batiments={projet.batiments_geojson ?? []}
+            orthoUrl={projet.ortho_url}
+            orthoEmprise={projet.ortho_emprise}
             opaciteOrtho={etat.opaciteOrtho}
-            dispatch={dispatch}
-          />
-        )}
-
-        <PanneauInfos selection={selectionElements} />
-
-        {etat.etape === 2 && (
-          <PanneauZones
             elements={etat.elements}
+            selection={etat.selection}
+            calques={etat.calques}
+            traceEnCours={etat.traceEnCours}
+            outil={etat.outil}
+            curseurRef={curseurRef}
+            accrochageRef={accrochageRef}
+            zoomRef={zoomRef}
+            rectDebut={rectDebut}
+            onPointerMove={onPointerMoveHandler}
+            onPointerDown={onPointerDownHandler}
+            onPointerUp={onPointerUpHandler}
+            onContextMenu={onContextMenu}
+            dragIdsRef={dragIdsRef}
+            dragDeltaRef={dragDeltaRef}
+            dragAltRef={dragAltRef}
+            survoleRef={survoleRef}
+            poigneeSurvoleRef={poigneeSurvoleRef}
+            poigneePreviewRef={poigneePreviewRef}
+            poigneeActive={poigneeActive}
+            etape={etat.etape}
             zoneActive={etat.zoneActive}
-            dispatch={dispatch}
-            onCadrerZone={cadrerSurZone}
-            onToutLeJardin={toutLeJardin}
+            planteSelectionnee={etat.planteSelectionnee}
           />
         )}
 
-        {etat.etape === 4 && (
+        {/* Vue 3D à l'étape 5 */}
+        {etat.etape === 5 && donnees3D && (
+          <div className="w-full h-full bg-stone-900" data-testid="conteneur-3d">
+            <Scene3DDynamic ref={sceneRef} donnees={donnees3D} />
+          </div>
+        )}
+
+        {/* Panneaux de l'éditeur 2D (masqués à l'étape 5) */}
+        {etat.etape !== 5 && (
           <>
-            <PanneauVegetaux
+            <BarreOutils
+              outil={etat.outil}
+              accrochage={etat.accrochageActif}
+              ortho={etat.modeOrtho}
+              etape={etat.etape}
               dispatch={dispatch}
-              planteActive={etat.planteSelectionnee}
             />
-            <PanneauListeVegetaux
-              elements={etat.elements}
-              dispatch={dispatch}
-            />
+
+            {etat.etape === 3 && (
+              <PanneauCalques
+                calques={etat.calques}
+                calqueActif={etat.calqueActif}
+                opaciteOrtho={etat.opaciteOrtho}
+                dispatch={dispatch}
+              />
+            )}
+
+            <PanneauInfos selection={selectionElements} />
+
+            {etat.etape === 2 && (
+              <PanneauZones
+                elements={etat.elements}
+                zoneActive={etat.zoneActive}
+                dispatch={dispatch}
+                onCadrerZone={cadrerSurZone}
+                onToutLeJardin={toutLeJardin}
+              />
+            )}
+
+            {etat.etape === 4 && (
+              <>
+                <PanneauVegetaux
+                  dispatch={dispatch}
+                  planteActive={etat.planteSelectionnee}
+                />
+                <PanneauListeVegetaux
+                  elements={etat.elements}
+                  dispatch={dispatch}
+                />
+              </>
+            )}
+
+            {/* Bouton Aperçu 3D aux étapes 3 et 4 */}
+            {(etat.etape === 3 || etat.etape === 4) && (
+              <button
+                onClick={() => setApercu3D(true)}
+                className="absolute bottom-14 left-3 z-10 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors"
+                data-testid="btn-apercu-3d"
+              >
+                Aperçu 3D
+              </button>
+            )}
           </>
         )}
 
-        {surfaceParcelle != null && (
+        {/* Contrôles étape 5 : sélecteur zone et vue piéton */}
+        {etat.etape === 5 && (
+          <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+            <button
+              onClick={() => sceneRef.current?.vuePieton()}
+              className="bg-stone-700 hover:bg-stone-600 text-stone-200 rounded px-3 py-1 text-[0.75rem]"
+              data-testid="btn-vue-pieton"
+            >
+              Vue piéton
+            </button>
+          </div>
+        )}
+
+        {surfaceParcelle != null && etat.etape !== 5 && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-white/90 px-3 py-1.5 rounded text-[0.82rem] text-ink border border-hair-light">
             Parcelle : {surfaceParcelle.toLocaleString("fr-FR")} m²
           </div>
         )}
 
-        <BarreSaisie
-          saisie={etat.saisie}
-          message={etat.messageCommande}
-          sauvegarde={sauvegarde}
-        />
+        {etat.etape !== 5 && (
+          <BarreSaisie
+            saisie={etat.saisie}
+            message={etat.messageCommande}
+            sauvegarde={sauvegarde}
+          />
+        )}
         <span data-testid="element-count" className="hidden">{etat.elements.size}</span>
 
+        {/* Aperçu 3D en overlay (étapes 3/4) */}
+        {apercu3D && donnees3D && (
+          <div className="fixed inset-0 z-50 bg-stone-900 flex flex-col" data-testid="apercu-3d-overlay">
+            <div className="flex items-center gap-4 px-4 py-2 bg-stone-800 text-stone-200 text-sm shrink-0">
+              <button
+                onClick={() => setApercu3D(false)}
+                className="hover:text-white transition-colors"
+                data-testid="btn-retour-plan"
+              >
+                ← Retour au plan
+              </button>
+              <div className="flex-1" />
+              <button
+                onClick={() => sceneRef.current?.vuePieton()}
+                className="bg-stone-700 hover:bg-stone-600 text-stone-200 rounded px-3 py-1 text-sm transition-colors"
+              >
+                Vue piéton
+              </button>
+            </div>
+            <div className="flex-1 min-h-0" data-testid="conteneur-3d">
+              <Scene3DDynamic ref={sceneRef} donnees={donnees3D} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

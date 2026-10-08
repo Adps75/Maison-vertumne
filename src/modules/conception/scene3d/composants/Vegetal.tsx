@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useMemo, Suspense } from "react";
+import { useRef, useMemo, useEffect, Suspense } from "react";
 import { useFrame, useLoader } from "@react-three/fiber";
 import * as THREE from "three";
 import type { Vegetal3D } from "../types";
 import { planVers3D } from "../conversion";
+import { garderImageEnCache } from "../cache-textures";
 
 interface VegetauxProps {
   vegetaux: Vegetal3D[];
@@ -26,6 +27,13 @@ export function Vegetaux({ vegetaux }: VegetauxProps) {
 function VegetalBillboard({ vegetal }: { vegetal: Vegetal3D }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const texture = useLoader(THREE.TextureLoader, vegetal.imageUrl);
+
+  // Garder l'image en cache mémoire pour éviter un retéléchargement
+  useEffect(() => {
+    if (texture.image instanceof HTMLImageElement) {
+      garderImageEnCache(vegetal.imageUrl, texture.image);
+    }
+  }, [texture, vegetal.imageUrl]);
 
   // Calculer la largeur depuis le ratio de l'image chargée
   const largeur = useMemo(() => {

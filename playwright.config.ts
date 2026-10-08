@@ -27,6 +27,11 @@ export default defineConfig({
       use: { browserName: "chromium" },
       dependencies: ["auth-setup"],
     },
+    {
+      name: "webkit",
+      use: { browserName: "webkit" },
+      dependencies: ["auth-setup"],
+    },
   ],
   webServer: {
     command: `npm run dev -- -p ${port}`,
