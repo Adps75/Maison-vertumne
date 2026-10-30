@@ -91,6 +91,13 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
   src/modules/conception/terrain/ (interpolation bilinéaire + Delaunay via delaunator).
   Courbes de niveau par d3-contour. Variable E2E_RELIEF_FIXTURE=plan_incline pour
   les tests (aucun appel IGN réel).
+- Points de vue photo : table conception_points_de_vue, photos dans le bucket
+  conception. EXIF lu côté navigateur (exifr). Champ de vision diagonal depuis
+  la focale 35 mm (diagonale 43,27 mm du format 24×36), puis vertical selon
+  l'aspect de chaque photo. Caméra Three.js en Euler YXZ : yaw = -cap,
+  pitch = inclinaison, roll = roulis. SceneCalage (traits) et SceneVisuel
+  (végétaux + occludeurs + ombres) dans scene3d/composants/. Export PNG via
+  canvas 2D composite. Code dans src/modules/conception/camera/.
 
 ## Tests
 - La config Playwright lit le port depuis la variable d'environnement PORT (défaut 3000).

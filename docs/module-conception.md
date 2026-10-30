@@ -45,6 +45,15 @@ Navigation libre entre les étapes construites ; les étapes non construites son
 - **Courbes de niveau** : calculées par l'algorithme des carrés marchants (`d3-contour`), intervalle 25 cm, affichées en 2D aux étapes 3-4.
 - **3D** : sol en maillage relief avec orthophoto drapée, végétaux et bâtiments posés à la bonne altitude, surfaces dessinées à hauteur moyenne + 2 cm.
 
+## Points de vue et calage photo
+- **Table `conception_points_de_vue`** : chaque point de vue stocke la photo (bucket conception), les métadonnées EXIF, les paramètres caméra (position, cap, inclinaison, roulis, champ de vision vertical), la position du soleil, et un statut (à caler / calé).
+- **Import** : lecture EXIF côté navigateur (exifr) avant réencodage JPEG (3 000 px max, orientation appliquée, pas de GPS). Champ de vision initial calculé depuis la focale équivalente 35 mm et la diagonale du format 24×36.
+- **Placement caméra** : deux clics sur le plan (position + cible → cap calculé). Hauteur par défaut : 1,60 m au-dessus du terrain.
+- **Calage** : photo en arrière-plan, scène 3D en traits par-dessus (arêtes bâtiments, grille terrain, contours). Réglages par curseurs et clavier (flèches ±1°, Shift ±0,1°). Caméra Three.js en Euler YXZ (yaw = -cap, pitch = inclinaison, roll = roulis).
+- **Visuel** : photo + végétaux du projet (billboards face caméra) + bâtiments et terrain comme occludeurs invisibles (colorWrite: false) + ombres portées (ShadowMaterial sur le terrain). Soleil réglable (azimut, élévation).
+- **Export PNG** : assemblage sur canvas 2D (photo + rendu 3D transparent + mention), à la résolution de la photo.
+- Code dans `src/modules/conception/camera/` (types, fov, projection) et `src/modules/conception/scene3d/composants/` (SceneCalage, SceneVisuel).
+
 ## Points de vigilance
 - Ne pas bloquer les premières ventes en attendant l'outil : présenter les premiers projets avec SketchUp ou des collages si besoin, et tester le module sur de vrais projets.
 - Visuels marqués « visuel d'ambiance non contractuel, végétaux à 2-3 ans ».

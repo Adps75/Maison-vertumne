@@ -11,6 +11,10 @@ import { genererCourbes } from "@/modules/conception/terrain/courbes";
 import { normaliserNombre } from "@/modules/conception/editeur/commandes";
 import type { GrilleRelief, PointCote, CourbeDeNiveau } from "@/modules/conception/terrain/types";
 import { altitudeIGN } from "@/modules/conception/terrain/grille";
+import type { PointDeVue, CameraParams, SoleilParams } from "@/modules/conception/camera/types";
+import { PanneauPointsDeVue } from "@/modules/conception/composants/PanneauPointsDeVue";
+import { VueCalage } from "@/modules/conception/composants/VueCalage";
+import { VueVisuel } from "@/modules/conception/composants/VueVisuel";
 import {
   reducer,
   etatInitial,
@@ -104,6 +108,11 @@ export function PageProjetClient() {
   const [pointCoteEnCours, setPointCoteEnCours] = useState<Pt | null>(null);
   const [reliefChargement, setReliefChargement] = useState(false);
 
+  // Points de vue photo (étape 5)
+  const [pointsDeVue, setPointsDeVue] = useState<PointDeVue[]>([]);
+  const [pdvActif, setPdvActif] = useState<PointDeVue | null>(null);
+  const [modeVue, setModeVue] = useState<"calage" | "visuel" | null>(null);
+
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
   const accrochageRef = useRef<AccrochageType | null>(null);
@@ -193,6 +202,13 @@ export function PageProjetClient() {
         if (elementsData.ok && elementsData.elements) {
           dispatch({ type: "CHARGER_ELEMENTS", elements: elementsData.elements });
         }
+      })
+      .then(() => {
+        // Charger les points de vue
+        fetch(`/api/conception/projets/${id}/points-de-vue`)
+          .then((r) => r.json())
+          .then((d) => { if (d.ok) setPointsDeVue(d.points_de_vue); })
+          .catch(() => {});
       })
       .catch(() => setErreur("Impossible de charger le projet."))
       .finally(() => setChargement(false));
@@ -1103,6 +1119,9 @@ export function PageProjetClient() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // 3D ouverte : seul Échap ferme l'aperçu
+      // Vues photo calage/visuel : clavier suspendu
+      if (modeVue) return;
+
       if (apercu3D) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1174,7 +1193,7 @@ export function PageProjetClient() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [etat.saisie, etat.elements, sommetSelectionne, onEntreeSaisie, apercu3D]);
+  }, [etat.saisie, etat.elements, sommetSelectionne, onEntreeSaisie, apercu3D, modeVue]);
 
   // Sélection comme tableau d'éléments pour PanneauInfos
   const selectionElements = Array.from(etat.selection)
@@ -1587,17 +1606,31 @@ export function PageProjetClient() {
           </>
         )}
 
-        {/* Contrôles étape 5 : sélecteur zone et vue piéton */}
+        {/* Contrôles étape 5 : vue piéton + panneau points de vue */}
         {etat.etape === 5 && (
-          <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-            <button
-              onClick={() => sceneRef.current?.vuePieton()}
-              className="bg-stone-700 hover:bg-stone-600 text-stone-200 rounded px-3 py-1 text-[0.75rem]"
-              data-testid="btn-vue-pieton"
-            >
-              Vue piéton
-            </button>
-          </div>
+          <>
+            <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
+              <button
+                onClick={() => sceneRef.current?.vuePieton()}
+                className="bg-stone-700 hover:bg-stone-600 text-stone-200 rounded px-3 py-1 text-[0.75rem]"
+                data-testid="btn-vue-pieton"
+              >
+                Vue piéton
+              </button>
+            </div>
+            <PanneauPointsDeVue
+              projetId={id}
+              zoneActive={etat.zoneActive}
+              pointsDeVue={pointsDeVue}
+              onSelect={(pdv) => { setPdvActif(pdv); setModeVue("calage"); }}
+              onImported={() => {
+                fetch(`/api/conception/projets/${id}/points-de-vue`)
+                  .then((r) => r.json())
+                  .then((d) => { if (d.ok) setPointsDeVue(d.points_de_vue); })
+                  .catch(() => {});
+              }}
+            />
+          </>
         )}
 
         {surfaceParcelle != null && etat.etape !== 5 && (
@@ -1638,6 +1671,45 @@ export function PageProjetClient() {
               <Scene3DDynamic ref={sceneRef} donnees={donnees3D} />
             </div>
           </div>
+        )}
+        {/* Vue Calage photo */}
+        {modeVue === "calage" && pdvActif && donnees3D && (
+          <VueCalage
+            pdv={pdvActif}
+            donnees={donnees3D}
+            altitudeEn={altitudeEn}
+            onSave={async (camera) => {
+              await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ camera, statut: "cale" }),
+              });
+              const updated = { ...pdvActif, camera, statut: "cale" as const };
+              setPdvActif(updated);
+              setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+            }}
+            onClose={() => { setModeVue(null); setPdvActif(null); }}
+            onVisuel={() => setModeVue("visuel")}
+          />
+        )}
+
+        {/* Vue Visuel photo */}
+        {modeVue === "visuel" && pdvActif && donnees3D && (
+          <VueVisuel
+            pdv={pdvActif}
+            donnees={donnees3D}
+            altitudeEn={altitudeEn}
+            onSaveSoleil={async (soleil) => {
+              await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ soleil }),
+              });
+              setPdvActif((prev) => prev ? { ...prev, soleil } : prev);
+            }}
+            onClose={() => { setModeVue(null); setPdvActif(null); }}
+            onCalage={() => setModeVue("calage")}
+          />
         )}
       </div>
     </div>
