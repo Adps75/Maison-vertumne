@@ -14,15 +14,46 @@ interface Props {
   pdv: PointDeVue;
   donnees: DonneesScene3D;
   altitudeEn: (x: number, y: number) => number;
-  onSaveSoleil: (soleil: SoleilParams) => void;
+  onSaveSoleil: (soleil: SoleilParams) => void | Promise<void>;
   onClose: () => void;
   onCalage: () => void;
 }
 
 export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage }: Props) {
   const [soleil, setSoleil] = useState<SoleilParams>({ ...pdv.soleil });
+  const [statutSoleil, setStatutSoleil] = useState<"idle" | "saving" | "saved">("idle");
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const photoRef = useRef<HTMLImageElement>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [photoRect, setPhotoRect] = useState<{ w: number; h: number; x: number; y: number } | null>(null);
+
+  // Mesurer la taille réelle affichée de la photo (à partir du DOM)
+  const mesurerPhoto = useCallback(() => {
+    const img = photoRef.current;
+    const parent = parentRef.current;
+    if (!img || !parent || !img.complete || img.naturalWidth === 0) return;
+
+    const pr = parent.getBoundingClientRect();
+    const ir = img.getBoundingClientRect();
+
+    setPhotoRect({
+      w: ir.width,
+      h: ir.height,
+      x: ir.left - pr.left,
+      y: ir.top - pr.top,
+    });
+  }, []);
+
+  useEffect(() => {
+    mesurerPhoto();
+    const parent = parentRef.current;
+    if (!parent) return;
+    const observer = new ResizeObserver(mesurerPhoto);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [mesurerPhoto]);
+
+  const onPhotoLoad = useCallback(() => mesurerPhoto(), [mesurerPhoto]);
 
   const exporterPNG = useCallback(async () => {
     const container = canvasContainerRef.current;
@@ -32,19 +63,14 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
     const canvas3d = container.querySelector("canvas");
     if (!canvas3d) return;
 
-    // Canvas 2D à la résolution de la photo
     const out = document.createElement("canvas");
     out.width = pdv.largeur_px;
     out.height = pdv.hauteur_px;
     const ctx = out.getContext("2d")!;
 
-    // 1. Photo en arrière-plan
     ctx.drawImage(photoImg, 0, 0, pdv.largeur_px, pdv.hauteur_px);
-
-    // 2. Rendu 3D par-dessus (végétaux + ombres, fond transparent)
     ctx.drawImage(canvas3d, 0, 0, pdv.largeur_px, pdv.hauteur_px);
 
-    // 3. Mention en bas
     const mention = "Visuel d'ambiance non contractuel, végétaux à 2-3 ans";
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     const fontSize = Math.max(12, pdv.largeur_px * 0.012);
@@ -59,7 +85,6 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
     ctx.fillStyle = "rgba(255,255,255,0.85)";
     ctx.fillText(mention, (pdv.largeur_px - textW) / 2, pdv.hauteur_px - 12);
 
-    // Télécharger
     out.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
@@ -105,36 +130,45 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
       {/* Zone principale */}
       <div className="flex-1 flex min-h-0">
         {/* Photo + scène superposée */}
-        <div className="flex-1 relative flex items-center justify-center bg-black">
+        <div ref={parentRef} className="flex-1 relative bg-black overflow-hidden">
           {/* Photo pleine opacité */}
           <img
             ref={photoRef}
             src={`/api/conception/projets/${pdv.projet_id}/points-de-vue/${pdv.id}/image`}
             alt={pdv.nom}
             className="absolute max-w-full max-h-full object-contain"
+            style={{
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+            }}
             crossOrigin="anonymous"
+            onLoad={onPhotoLoad}
+            draggable={false}
             data-testid="photo-visuel"
           />
-          {/* Canvas 3D superposé, exactement sur la photo */}
-          <div
-            ref={canvasContainerRef}
-            className="absolute"
-            style={{
-              width: "100%",
-              height: "100%",
-              maxWidth: `min(100%, ${pdv.largeur_px}px)`,
-              maxHeight: `min(100%, ${pdv.hauteur_px}px)`,
-              aspectRatio: `${pdv.largeur_px} / ${pdv.hauteur_px}`,
-            }}
-            data-testid="canvas-visuel"
-          >
-            <SceneVisuelDynamic
-              donnees={donnees}
-              camera={pdv.camera}
-              soleil={soleil}
-              altitudeEn={altitudeEn}
-            />
-          </div>
+          {/* Canvas 3D superposé, exactement sur le rectangle affiché de la photo */}
+          {photoRect && (
+            <div
+              ref={canvasContainerRef}
+              className="absolute"
+              style={{
+                left: photoRect.x,
+                top: photoRect.y,
+                width: photoRect.w,
+                height: photoRect.h,
+              }}
+              data-testid="canvas-visuel"
+            >
+              <SceneVisuelDynamic
+                donnees={donnees}
+                camera={pdv.camera}
+                soleil={soleil}
+                altitudeEn={altitudeEn}
+                photoAspect={pdv.largeur_px / pdv.hauteur_px}
+              />
+            </div>
+          )}
         </div>
 
         {/* Panneau soleil */}
@@ -153,10 +187,20 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
             testid="slider-elevation"
           />
           <button
-            onClick={() => onSaveSoleil(soleil)}
-            className="mt-3 w-full bg-brass hover:bg-brass-soft text-paper rounded px-2 py-1.5"
+            onClick={async () => {
+              setStatutSoleil("saving");
+              try {
+                await onSaveSoleil(soleil);
+                setStatutSoleil("saved");
+                setTimeout(() => setStatutSoleil("idle"), 1500);
+              } catch {
+                setStatutSoleil("idle");
+              }
+            }}
+            disabled={statutSoleil === "saving"}
+            className="mt-3 w-full bg-brass hover:bg-brass-soft text-paper rounded px-2 py-1.5 disabled:opacity-70"
           >
-            Enregistrer soleil
+            {statutSoleil === "saving" ? "Enregistrement…" : statutSoleil === "saved" ? "Enregistré ✓" : "Enregistrer soleil"}
           </button>
         </div>
       </div>

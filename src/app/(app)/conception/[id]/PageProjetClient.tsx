@@ -12,6 +12,7 @@ import { normaliserNombre } from "@/modules/conception/editeur/commandes";
 import type { GrilleRelief, PointCote, CourbeDeNiveau } from "@/modules/conception/terrain/types";
 import { altitudeIGN } from "@/modules/conception/terrain/grille";
 import type { PointDeVue, CameraParams, SoleilParams } from "@/modules/conception/camera/types";
+import { normaliserCap, vfovFromFocal35mm } from "@/modules/conception/camera/fov";
 import { PanneauPointsDeVue } from "@/modules/conception/composants/PanneauPointsDeVue";
 import { VueCalage } from "@/modules/conception/composants/VueCalage";
 import { VueVisuel } from "@/modules/conception/composants/VueVisuel";
@@ -112,6 +113,12 @@ export function PageProjetClient() {
   const [pointsDeVue, setPointsDeVue] = useState<PointDeVue[]>([]);
   const [pdvActif, setPdvActif] = useState<PointDeVue | null>(null);
   const [modeVue, setModeVue] = useState<"calage" | "visuel" | null>(null);
+  const [placementPdv, setPlacementPdv] = useState<{
+    pdvId: string;
+    phase: "position" | "direction";
+    position?: [number, number];
+  } | null>(null);
+  const [reliefMessage, setReliefMessage] = useState<string | null>(null);
 
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
@@ -227,6 +234,49 @@ export function PageProjetClient() {
       }
     }
   }, [projet]);
+
+  // Auto-récupération du relief à l'étape 5 si absent
+  useEffect(() => {
+    if (etat.etape !== 5 || !projet || grilleRelief || reliefChargement) return;
+    // Pas de grille chargée → tenter de la récupérer automatiquement
+    setReliefChargement(true);
+    setReliefMessage("Chargement du relief…");
+    (async () => {
+      try {
+        // D'abord vérifier si le relief existe déjà côté serveur
+        const checkRes = await fetch(`/api/conception/projets/${id}/relief`);
+        const checkData = await checkRes.json();
+        if (checkData.relief_url) {
+          setAltRefNgf(checkData.altitude_reference_ngf);
+          const g = await fetch(checkData.relief_url).then((r) => r.json());
+          setGrilleRelief(g);
+          setReliefMessage(null);
+          return;
+        }
+        // Sinon, lancer la récupération IGN
+        const res = await fetch(`/api/conception/projets/${id}/relief`, { method: "POST" });
+        const data = await res.json();
+        if (data.ok && data.relief_disponible) {
+          setAltRefNgf(data.altitude_reference_ngf);
+          const reliefRes = await fetch(`/api/conception/projets/${id}/relief`);
+          const reliefData = await reliefRes.json();
+          if (reliefData.relief_url) {
+            const g = await fetch(reliefData.relief_url).then((r) => r.json());
+            setGrilleRelief(g);
+          }
+          setReliefMessage(null);
+        } else if (data.ok && !data.relief_disponible) {
+          setReliefMessage("Relief indisponible — terrain plat.");
+        } else {
+          setReliefMessage("Erreur de chargement du relief.");
+        }
+      } catch {
+        setReliefMessage("Erreur de chargement du relief.");
+      } finally {
+        setReliefChargement(false);
+      }
+    })();
+  }, [etat.etape, projet, grilleRelief, reliefChargement, id]);
 
   // Garder saisieRef en sync
   useEffect(() => { saisieRef.current = etat.saisie; }, [etat.saisie]);
@@ -914,6 +964,40 @@ export function PageProjetClient() {
         return;
       }
 
+      // 3b. Placement de caméra (deux clics sur le plan)
+      if (placementPdv && pointerDownPtRef.current) {
+        if (placementPdv.phase === "position") {
+          setPlacementPdv({ ...placementPdv, phase: "direction", position: [finalPt[0], finalPt[1]] });
+          dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: "Cliquez pour indiquer la direction du regard" });
+          pointerDownPtRef.current = null;
+          return;
+        }
+        if (placementPdv.phase === "direction" && placementPdv.position) {
+          const [x1, y1] = placementPdv.position;
+          const [x2, y2] = [finalPt[0], finalPt[1]];
+          const cap = normaliserCap(Math.atan2(x2 - x1, y2 - y1) * 180 / Math.PI);
+
+          // Sauvegarder la position et le cap
+          const pdv = pointsDeVue.find((p) => p.id === placementPdv.pdvId);
+          if (pdv) {
+            const newCam: CameraParams = { ...pdv.camera, x: x1, y: y1, cap };
+            fetch(`/api/conception/projets/${id}/points-de-vue/${pdv.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ camera: newCam }),
+            }).catch(() => {});
+            const updated = { ...pdv, camera: newCam };
+            setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+            setPdvActif(updated);
+            setModeVue("calage");
+          }
+          setPlacementPdv(null);
+          dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+          pointerDownPtRef.current = null;
+          return;
+        }
+      }
+
       // 4. Clic simple (pointerdown sans drag)
       if (pointerDownPtRef.current) {
         onClicCanevas(finalPt);
@@ -921,7 +1005,7 @@ export function PageProjetClient() {
         pointerDownElementRef.current = null;
       }
     },
-    [rectDebut, etat.outil, etat.elements, etat.calques, etat.etape, poigneeActive, onClicCanevas],
+    [rectDebut, etat.outil, etat.elements, etat.calques, etat.etape, poigneeActive, onClicCanevas, placementPdv, pointsDeVue, id],
   );
 
   // Saisie Entrée/Espace
@@ -1263,7 +1347,7 @@ export function PageProjetClient() {
   }, [courbesVisibles, altitudeEn, projet, etat.zoneActive, etat.elements]);
 
   // Préparer les données 3D (depuis l'état en mémoire, pas un fetch)
-  const afficher3D = etat.etape === 5 || apercu3D;
+  const afficher3D = etat.etape === 5 || apercu3D || modeVue !== null;
   const donnees3D = useMemo(() => {
     if (!afficher3D || !projet) return null;
     const projetPour3D: ProjetPour3D = {
@@ -1372,9 +1456,13 @@ export function PageProjetClient() {
     );
   }
 
+  // Quand le calage ou le visuel est ouvert, on masque l'éditeur pour
+  // garantir un plein écran propre (pas de chevauchement, pas de z-index)
+  const editeurMasque = modeVue !== null;
+
   return (
     <div className="h-screen flex flex-col bg-paper">
-      <header className="border-b border-hair-light px-4 py-2 flex items-center justify-between shrink-0">
+      <header className="border-b border-hair-light px-4 py-2 flex items-center justify-between shrink-0" style={editeurMasque ? { display: "none" } : undefined}>
         <div className="flex items-center gap-3">
           <Link href="/conception" className="text-brass hover:text-brass-soft text-[0.82rem]">
             &larr;
@@ -1441,16 +1529,17 @@ export function PageProjetClient() {
           </form>
         </div>
       </header>
-      <BarreEtapes
-        etape={etat.etape}
-        aZones={aZones}
-        aVegetaux={aVegetaux}
-        dispatch={dispatch}
-      />
-      <div className="flex-1 relative overflow-hidden" data-testid="canevas-container">
-        {/* Éditeur 2D (masqué à l'étape 5, présent en mémoire) */}
-        {etat.etape !== 5 && (
-          <CanevasEditeur
+      {!editeurMasque && (
+        <BarreEtapes
+          etape={etat.etape}
+          aZones={aZones}
+          aVegetaux={aVegetaux}
+          dispatch={dispatch}
+        />
+      )}
+      <div className="flex-1 relative overflow-hidden" data-testid="canevas-container" style={editeurMasque ? { display: "none" } : undefined}>
+        {/* Éditeur 2D — visible à toutes les étapes */}
+        <CanevasEditeur
             parcelles={projet.parcelles_geojson}
             batiments={projet.batiments_geojson ?? []}
             orthoUrl={projet.ortho_url}
@@ -1481,14 +1570,6 @@ export function PageProjetClient() {
             planteSelectionnee={etat.planteSelectionnee}
             courbes={courbes}
           />
-        )}
-
-        {/* Vue 3D à l'étape 5 */}
-        {etat.etape === 5 && donnees3D && (
-          <div className="w-full h-full bg-stone-900" data-testid="conteneur-3d">
-            <Scene3DDynamic ref={sceneRef} donnees={donnees3D} />
-          </div>
-        )}
 
         {/* Panneaux de l'éditeur 2D (masqués à l'étape 5) */}
         {etat.etape !== 5 && (
@@ -1606,28 +1687,51 @@ export function PageProjetClient() {
           </>
         )}
 
-        {/* Contrôles étape 5 : vue piéton + panneau points de vue */}
+        {/* Contrôles étape 5 : panneau points de vue + placement + relief */}
         {etat.etape === 5 && (
           <>
-            <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
-              <button
-                onClick={() => sceneRef.current?.vuePieton()}
-                className="bg-stone-700 hover:bg-stone-600 text-stone-200 rounded px-3 py-1 text-[0.75rem]"
-                data-testid="btn-vue-pieton"
-              >
-                Vue piéton
-              </button>
-            </div>
+            {placementPdv && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-stone-800/90 text-stone-200 px-4 py-2 rounded text-[0.82rem] border border-stone-600">
+                {placementPdv.phase === "position"
+                  ? "Cliquez pour positionner la caméra"
+                  : "Cliquez pour indiquer la direction du regard"}
+              </div>
+            )}
+            {reliefMessage && (
+              <div className="absolute bottom-14 left-3 z-10 bg-stone-800/90 text-stone-300 px-3 py-1.5 rounded text-[0.75rem]">
+                {reliefMessage}
+              </div>
+            )}
             <PanneauPointsDeVue
               projetId={id}
               zoneActive={etat.zoneActive}
               pointsDeVue={pointsDeVue}
               onSelect={(pdv) => { setPdvActif(pdv); setModeVue("calage"); }}
+              onPlacer={(pdv) => {
+                setPlacementPdv({ pdvId: pdv.id, phase: "position" });
+                dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: "Cliquez pour positionner la caméra" });
+              }}
               onImported={() => {
                 fetch(`/api/conception/projets/${id}/points-de-vue`)
                   .then((r) => r.json())
                   .then((d) => { if (d.ok) setPointsDeVue(d.points_de_vue); })
                   .catch(() => {});
+              }}
+              onFocaleChange={async (pdvId, focale35mm) => {
+                const pdv = pointsDeVue.find((p) => p.id === pdvId);
+                if (!pdv) return;
+                const aspect = pdv.largeur_px / pdv.hauteur_px;
+                const fov_v = vfovFromFocal35mm(focale35mm, aspect);
+                const newCam = { ...pdv.camera, fov_v };
+                const newExif = { ...pdv.exif, focale_35mm: focale35mm };
+                await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ camera: newCam, exif: newExif }),
+                });
+                setPointsDeVue((prev) => prev.map((p) =>
+                  p.id === pdvId ? { ...p, camera: newCam, exif: newExif } : p
+                ));
               }}
             />
           </>
@@ -1672,46 +1776,64 @@ export function PageProjetClient() {
             </div>
           </div>
         )}
-        {/* Vue Calage photo */}
-        {modeVue === "calage" && pdvActif && donnees3D && (
-          <VueCalage
-            pdv={pdvActif}
-            donnees={donnees3D}
-            altitudeEn={altitudeEn}
-            onSave={async (camera) => {
-              await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ camera, statut: "cale" }),
-              });
-              const updated = { ...pdvActif, camera, statut: "cale" as const };
-              setPdvActif(updated);
-              setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-            }}
-            onClose={() => { setModeVue(null); setPdvActif(null); }}
-            onVisuel={() => setModeVue("visuel")}
-          />
-        )}
-
-        {/* Vue Visuel photo */}
-        {modeVue === "visuel" && pdvActif && donnees3D && (
-          <VueVisuel
-            pdv={pdvActif}
-            donnees={donnees3D}
-            altitudeEn={altitudeEn}
-            onSaveSoleil={async (soleil) => {
-              await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ soleil }),
-              });
-              setPdvActif((prev) => prev ? { ...prev, soleil } : prev);
-            }}
-            onClose={() => { setModeVue(null); setPdvActif(null); }}
-            onCalage={() => setModeVue("calage")}
-          />
-        )}
       </div>
+
+      {/* Vue Calage photo (assistant 4 étapes) — rendu hors du canevas pour couvrir tout */}
+      {modeVue === "calage" && pdvActif && donnees3D && (
+        <VueCalage
+          pdv={pdvActif}
+          donnees={donnees3D}
+          altitudeEn={altitudeEn}
+          orthoUrl={projet.ortho_url}
+          orthoEmprise={projet.ortho_emprise}
+          batiments={projet.batiments_geojson ?? []}
+          parcelles={projet.parcelles_geojson}
+          onSave={async (camera, statut) => {
+            await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ camera, statut }),
+            });
+            const updated = { ...pdvActif, camera, statut };
+            setPdvActif(updated);
+            setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+          }}
+          onFocaleChange={async (focale35mm) => {
+            const aspect = pdvActif.largeur_px / pdvActif.hauteur_px;
+            const fov_v = vfovFromFocal35mm(focale35mm, aspect);
+            const newExif = { ...pdvActif.exif, focale_35mm: focale35mm };
+            await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ exif: newExif, camera: { ...pdvActif.camera, fov_v } }),
+            });
+            const updated = { ...pdvActif, exif: newExif, camera: { ...pdvActif.camera, fov_v } };
+            setPdvActif(updated);
+            setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+          }}
+          onClose={() => { setModeVue(null); setPdvActif(null); }}
+          onVisuel={() => setModeVue("visuel")}
+        />
+      )}
+
+      {/* Vue Visuel photo */}
+      {modeVue === "visuel" && pdvActif && donnees3D && (
+        <VueVisuel
+          pdv={pdvActif}
+          donnees={donnees3D}
+          altitudeEn={altitudeEn}
+          onSaveSoleil={async (soleil) => {
+            await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ soleil }),
+            });
+            setPdvActif((prev) => prev ? { ...prev, soleil } : prev);
+          }}
+          onClose={() => { setModeVue(null); setPdvActif(null); }}
+          onCalage={() => setModeVue("calage")}
+        />
+      )}
     </div>
   );
 }

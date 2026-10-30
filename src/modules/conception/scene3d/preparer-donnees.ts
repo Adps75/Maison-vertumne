@@ -6,7 +6,7 @@ import type { Pt } from "../geo/plan";
 import { cercleVersPolygone } from "../geo/plan";
 import { emprise3D, type Batiment3D } from "../geo/emprise3d";
 import type { Element } from "../types";
-import type { DonneesScene3D, Surface3D, Vegetal3D } from "./types";
+import type { DonneesScene3D, Surface3D, Vegetal3D, PointCote3D } from "./types";
 
 /** Couleurs par défaut par nom de calque. */
 const COULEURS_CALQUES: Record<string, string> = {
@@ -54,6 +54,30 @@ export function preparerDonneesScene(
   );
 
   // 3. Filtrer les éléments dans l'emprise
+  // Extraire les points cotés
+  const pointsCotes: PointCote3D[] = [];
+  for (const el of elements) {
+    if (el.type === "point_cote" && el.geometrie.type === "point") {
+      const alt = el.proprietes.altitude_relative_m;
+      if (typeof alt === "number") {
+        pointsCotes.push({
+          x: el.geometrie.position[0],
+          y: el.geometrie.position[1],
+          altitudeRelative: alt,
+        });
+      }
+    }
+  }
+
+  // Contour de la zone active
+  let zoneContour: Pt[] | null = null;
+  if (zoneId) {
+    const zone = elements.find((el) => el.id === zoneId && el.type === "zone");
+    if (zone) {
+      zoneContour = extrairePointsSurface(zone);
+    }
+  }
+
   const surfaces: Surface3D[] = [];
   const vegetaux: Vegetal3D[] = [];
 
@@ -96,6 +120,8 @@ export function preparerDonneesScene(
     surfaces,
     vegetaux,
     altitudeEn: altitudeEn ?? null,
+    pointsCotes,
+    zoneContour,
   };
 }
 

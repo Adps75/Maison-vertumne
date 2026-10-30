@@ -3,10 +3,11 @@
 import { useMemo, useEffect } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { DonneesScene3D, Surface3D } from "../types";
+import type { DonneesScene3D, Surface3D, PointCote3D } from "../types";
 import type { CameraParams } from "../../camera/types";
 import type { Batiment3D } from "../types";
 import type { Pt } from "../../geo/plan";
+import { Html } from "@react-three/drei";
 import { planVers3D } from "../conversion";
 import { cameraParamsVersThree } from "../../camera/projection";
 import { Nettoyeur } from "./Nettoyeur";
@@ -19,9 +20,20 @@ interface SceneCalageProps {
   donnees: DonneesScene3D;
   camera: CameraParams;
   altitudeEn: (x: number, y: number) => number;
+  /** Rapport largeur/hauteur de la photo (pour le calage exact de la caméra). */
+  photoAspect?: number;
+  /** Afficher la grille de terrain (défaut : true). */
+  afficherGrille?: boolean;
+  /** Afficher les contours de surfaces (défaut : true). */
+  afficherSurfaces?: boolean;
 }
 
-export function SceneCalage({ donnees, camera, altitudeEn }: SceneCalageProps) {
+export function SceneCalage({ donnees, camera, altitudeEn, photoAspect, afficherGrille = true, afficherSurfaces = true }: SceneCalageProps) {
+  // Emprise de la grille : zone active si disponible, sinon emprise complète, pas de 2 m
+  const empriseGrille = donnees.zoneContour
+    ? empriseDepuisContour(donnees.zoneContour)
+    : donnees.emprise;
+
   return (
     <Canvas
       camera={{ manual: true }}
@@ -29,12 +41,30 @@ export function SceneCalage({ donnees, camera, altitudeEn }: SceneCalageProps) {
       style={{ background: "transparent" }}
     >
       <Nettoyeur />
-      <CameraController params={camera} altitudeEn={altitudeEn} />
+      <CameraController params={camera} altitudeEn={altitudeEn} photoAspect={photoAspect} />
       <BatimentsFilDeFer batiments={donnees.batiments} altitudeEn={altitudeEn} />
-      <GrilleTerrain emprise={donnees.emprise} altitudeEn={altitudeEn} />
-      <SurfacesContour surfaces={donnees.surfaces} altitudeEn={altitudeEn} />
+      {afficherGrille && (
+        <GrilleTerrain emprise={empriseGrille} altitudeEn={altitudeEn} pas={2} />
+      )}
+      {afficherSurfaces && (
+        <SurfacesContour surfaces={donnees.surfaces} altitudeEn={altitudeEn} />
+      )}
+      {donnees.zoneContour && (
+        <ZoneContour points={donnees.zoneContour} altitudeEn={altitudeEn} />
+      )}
+      <PointsCotesMarqueurs pointsCotes={donnees.pointsCotes} altitudeEn={altitudeEn} />
     </Canvas>
   );
+}
+
+/** Calcule l'emprise [xMin, yMin, xMax, yMax] d'un contour de zone. */
+function empriseDepuisContour(points: Pt[]): [number, number, number, number] {
+  let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+  for (const [x, y] of points) {
+    if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+    if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+  }
+  return [xMin, yMin, xMax, yMax];
 }
 
 // ---------------------------------------------------------------------------
@@ -44,9 +74,11 @@ export function SceneCalage({ donnees, camera, altitudeEn }: SceneCalageProps) {
 function CameraController({
   params,
   altitudeEn,
+  photoAspect,
 }: {
   params: CameraParams;
   altitudeEn: (x: number, y: number) => number;
+  photoAspect?: number;
 }) {
   const { camera, size } = useThree();
 
@@ -54,13 +86,13 @@ function CameraController({
     const { position, quaternion, fov } = cameraParamsVersThree(params, altitudeEn);
     const cam = camera as THREE.PerspectiveCamera;
     cam.fov = fov;
-    cam.aspect = size.width / size.height;
+    cam.aspect = photoAspect ?? (size.width / size.height);
     cam.near = 0.1;
     cam.far = 1000;
     camera.position.copy(position);
     camera.quaternion.copy(quaternion);
     cam.updateProjectionMatrix();
-  }, [params, altitudeEn, camera, size]);
+  }, [params, altitudeEn, camera, size, photoAspect]);
 
   return null;
 }
@@ -176,18 +208,22 @@ function PolygoneEdges({
 function GrilleTerrain({
   emprise,
   altitudeEn,
+  pas = 1,
 }: {
   emprise: [number, number, number, number];
   altitudeEn: (x: number, y: number) => number;
+  /** Espacement de la grille en mètres (défaut 1 m). */
+  pas?: number;
 }) {
   const geometry = useMemo(() => {
     const [xMin, yMin, xMax, yMax] = emprise;
     const points: number[] = [];
+    const subPas = Math.max(0.5, pas / 2); // sous-échantillonnage pour le relief
 
     // Lignes est-ouest (Y constant)
-    for (let y = Math.ceil(yMin); y <= Math.floor(yMax); y++) {
-      for (let x = xMin; x < xMax; x += 0.5) {
-        const xEnd = Math.min(x + 0.5, xMax);
+    for (let y = Math.ceil(yMin / pas) * pas; y <= yMax; y += pas) {
+      for (let x = xMin; x < xMax; x += subPas) {
+        const xEnd = Math.min(x + subPas, xMax);
         const [ax, ay, az] = planVers3D(x, y, altitudeEn(x, y));
         const [bx, by, bz] = planVers3D(xEnd, y, altitudeEn(xEnd, y));
         points.push(ax, ay, az, bx, by, bz);
@@ -195,9 +231,9 @@ function GrilleTerrain({
     }
 
     // Lignes nord-sud (X constant)
-    for (let x = Math.ceil(xMin); x <= Math.floor(xMax); x++) {
-      for (let y = yMin; y < yMax; y += 0.5) {
-        const yEnd = Math.min(y + 0.5, yMax);
+    for (let x = Math.ceil(xMin / pas) * pas; x <= xMax; x += pas) {
+      for (let y = yMin; y < yMax; y += subPas) {
+        const yEnd = Math.min(y + subPas, yMax);
         const [ax, ay, az] = planVers3D(x, y, altitudeEn(x, y));
         const [bx, by, bz] = planVers3D(x, yEnd, altitudeEn(x, yEnd));
         points.push(ax, ay, az, bx, by, bz);
@@ -207,11 +243,11 @@ function GrilleTerrain({
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
     return geo;
-  }, [emprise, altitudeEn]);
+  }, [emprise, altitudeEn, pas]);
 
   return (
     <lineSegments geometry={geometry}>
-      <lineBasicMaterial color="#FFFF00" />
+      <lineBasicMaterial color="#FFFF00" opacity={0.5} transparent />
     </lineSegments>
   );
 }
@@ -270,6 +306,85 @@ function SurfaceContour({
     <lineSegments geometry={geometry}>
       <lineBasicMaterial color={surface.couleur} />
     </lineSegments>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ZoneContour : contour blanc de la zone active.
+// ---------------------------------------------------------------------------
+
+function ZoneContour({
+  points,
+  altitudeEn,
+}: {
+  points: Pt[];
+  altitudeEn: (x: number, y: number) => number;
+}) {
+  const geometry = useMemo(() => {
+    if (points.length < 3) return null;
+    const positions: number[] = [];
+    for (let i = 0; i < points.length; i++) {
+      const [x1, y1] = points[i];
+      const [x2, y2] = points[(i + 1) % points.length];
+      const [ax, ay, az] = planVers3D(x1, y1, altitudeEn(x1, y1) + 0.05);
+      const [bx, by, bz] = planVers3D(x2, y2, altitudeEn(x2, y2) + 0.05);
+      positions.push(ax, ay, az, bx, by, bz);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    return geo;
+  }, [points, altitudeEn]);
+
+  if (!geometry) return null;
+  return (
+    <lineSegments geometry={geometry}>
+      <lineBasicMaterial color="#FF8C00" />
+    </lineSegments>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PointsCotesMarqueurs : marqueurs rouges avec altitude pour les points cotés.
+// ---------------------------------------------------------------------------
+
+function PointsCotesMarqueurs({
+  pointsCotes,
+  altitudeEn,
+}: {
+  pointsCotes: PointCote3D[];
+  altitudeEn: (x: number, y: number) => number;
+}) {
+  if (pointsCotes.length === 0) return null;
+  return (
+    <>
+      {pointsCotes.map((pc, i) => {
+        const alt = altitudeEn(pc.x, pc.y);
+        const [tx, ty, tz] = planVers3D(pc.x, pc.y, alt);
+        const signe = pc.altitudeRelative >= 0 ? "+" : "";
+        const texte = `${signe}${pc.altitudeRelative.toFixed(2).replace(".", ",")}`;
+        return (
+          <group key={i} position={[tx, ty, tz]}>
+            <mesh>
+              <sphereGeometry args={[0.12, 8, 8]} />
+              <meshBasicMaterial color="#FF3333" />
+            </mesh>
+            <Html center distanceFactor={20} style={{ pointerEvents: "none" }}>
+              <span style={{
+                background: "rgba(0,0,0,0.7)",
+                color: "#FF6666",
+                padding: "1px 4px",
+                borderRadius: 3,
+                fontSize: 11,
+                fontWeight: 600,
+                whiteSpace: "nowrap",
+              }}>
+                {texte}
+              </span>
+            </Html>
+          </group>
+        );
+      })}
+    </>
   );
 }
 

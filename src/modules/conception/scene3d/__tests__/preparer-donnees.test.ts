@@ -211,4 +211,43 @@ describe("preparerDonneesScene", () => {
     expect(result.orthoUrl).toBe("https://example.com/ortho.jpg");
     expect(result.orthoEmprise).toEqual([-5, -5, 35, 25]);
   });
+
+  it("extrait les points cotés", () => {
+    const zone = creerElement({
+      id: "z1",
+      type: "zone",
+      geometrie: { type: "polygone", points: [[0, 0], [30, 0], [30, 20], [0, 20]] },
+      calque: "zones",
+    });
+    const pc = creerElement({
+      id: "pc1",
+      type: "point_cote",
+      geometrie: { type: "point", position: [10, 10] },
+      calque: "topographie",
+      proprietes: { altitude_relative_m: 0.45 },
+    });
+
+    const result = preparerDonneesScene(projetBase, [zone, pc], "z1");
+
+    expect(result.pointsCotes).toHaveLength(1);
+    expect(result.pointsCotes[0]).toEqual({ x: 10, y: 10, altitudeRelative: 0.45 });
+  });
+
+  it("extrait le contour de la zone active", () => {
+    const zone = creerElement({
+      id: "z1",
+      type: "zone",
+      geometrie: { type: "polygone", points: [[0, 0], [30, 0], [30, 20], [0, 20]] },
+      calque: "zones",
+    });
+
+    const result = preparerDonneesScene(projetBase, [zone], "z1");
+
+    expect(result.zoneContour).toEqual([[0, 0], [30, 0], [30, 20], [0, 20]]);
+  });
+
+  it("zoneContour est null sans zone active", () => {
+    const result = preparerDonneesScene(projetBase, []);
+    expect(result.zoneContour).toBeNull();
+  });
 });

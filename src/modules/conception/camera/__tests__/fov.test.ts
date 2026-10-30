@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { vfovFromFocal35mm } from "../fov";
+import { vfovFromFocal35mm, normaliserCap } from "../fov";
 
 /**
  * Valeurs de référence calculées à la main :
@@ -46,5 +46,41 @@ describe("vfovFromFocal35mm", () => {
     const paysage = vfovFromFocal35mm(26, 4 / 3);
     const portrait = vfovFromFocal35mm(26, 3 / 4);
     expect(portrait).toBeGreaterThan(paysage);
+  });
+});
+
+describe("normaliserCap", () => {
+  it("valeur déjà dans [0, 360[", () => {
+    expect(normaliserCap(90)).toBe(90);
+    expect(normaliserCap(0)).toBe(0);
+    expect(normaliserCap(359.9)).toBeCloseTo(359.9);
+  });
+
+  it("valeur négative", () => {
+    expect(normaliserCap(-90)).toBeCloseTo(270);
+    expect(normaliserCap(-180)).toBeCloseTo(180);
+    expect(normaliserCap(-360)).toBeCloseTo(0);
+    expect(normaliserCap(-1)).toBeCloseTo(359);
+  });
+
+  it("valeur > 360", () => {
+    expect(normaliserCap(360)).toBeCloseTo(0);
+    expect(normaliserCap(450)).toBeCloseTo(90);
+    expect(normaliserCap(720)).toBeCloseTo(0);
+  });
+
+  it("cap depuis deux points (nord, est, sud, ouest)", () => {
+    // Cap = atan2(dx, dy) → convention nord = 0, est = 90
+    const cap = (x1: number, y1: number, x2: number, y2: number) =>
+      normaliserCap(Math.atan2(x2 - x1, y2 - y1) * 180 / Math.PI);
+
+    // Vers le nord : dy > 0, dx = 0 → cap 0
+    expect(cap(0, 0, 0, 1)).toBeCloseTo(0);
+    // Vers l'est : dx > 0, dy = 0 → cap 90
+    expect(cap(0, 0, 1, 0)).toBeCloseTo(90);
+    // Vers le sud : dy < 0, dx = 0 → cap 180
+    expect(cap(0, 0, 0, -1)).toBeCloseTo(180);
+    // Vers l'ouest : dx < 0, dy = 0 → cap 270
+    expect(cap(0, 0, -1, 0)).toBeCloseTo(270);
   });
 });

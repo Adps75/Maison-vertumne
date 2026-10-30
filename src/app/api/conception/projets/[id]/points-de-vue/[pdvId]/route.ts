@@ -57,6 +57,7 @@ export async function PATCH(
     if (typeof body.zone_id === "string" || body.zone_id === null) updates.zone_id = body.zone_id;
     if (body.camera !== undefined) updates.camera = body.camera;
     if (body.soleil !== undefined) updates.soleil = body.soleil;
+    if (body.exif !== undefined) updates.exif = body.exif;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ ok: false, error: "Rien à mettre à jour." }, { status: 400 });

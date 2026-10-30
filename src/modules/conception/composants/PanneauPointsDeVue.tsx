@@ -4,17 +4,28 @@ import { useState, useRef } from "react";
 import type { PointDeVue, ExifData, CameraParams } from "../camera/types";
 import { vfovFromFocal35mm, FOCALE_35MM_DEFAUT } from "../camera/fov";
 
+/** Objectifs courants de smartphone (focale 35 mm équivalente). */
+const OBJECTIFS = [
+  { label: "Principal (26 mm)", focale: 26 },
+  { label: "Grand-angle (13 mm)", focale: 13 },
+  { label: "Zoom ×2 (52 mm)", focale: 52 },
+] as const;
+
 interface Props {
   projetId: string;
   zoneActive: string | null;
   pointsDeVue: PointDeVue[];
   onSelect: (pdv: PointDeVue) => void;
+  onPlacer: (pdv: PointDeVue) => void;
   onImported: () => void;
+  onFocaleChange: (pdvId: string, focale35mm: number) => void;
 }
 
-export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect, onImported }: Props) {
+export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect, onPlacer, onImported, onFocaleChange }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [chargement, setChargement] = useState(false);
+  const [focaleOuverte, setFocaleOuverte] = useState<string | null>(null);
+  const [focaleSaisie, setFocaleSaisie] = useState("");
 
   const importer = async (files: FileList) => {
     setChargement(true);
@@ -31,9 +42,22 @@ export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect
     }
   };
 
+  const choisirFocale = (pdvId: string, focale: number) => {
+    onFocaleChange(pdvId, focale);
+    setFocaleOuverte(null);
+  };
+
+  const validerFocaleSaisie = (pdvId: string) => {
+    const v = parseFloat(focaleSaisie.replace(",", "."));
+    if (!isNaN(v) && v > 0) {
+      choisirFocale(pdvId, v);
+    }
+    setFocaleSaisie("");
+  };
+
   return (
     <div
-      className="absolute top-12 right-3 z-10 bg-white/95 border border-hair-light rounded shadow-md w-56 max-h-[60vh] overflow-y-auto"
+      className="absolute top-12 right-3 z-10 bg-white/95 border border-hair-light rounded shadow-md w-60 max-h-[60vh] overflow-y-auto"
       data-testid="panneau-points-de-vue"
     >
       <div className="px-3 py-2 border-b border-hair-light">
@@ -48,22 +72,75 @@ export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect
           </p>
         )}
         {pointsDeVue.map((pdv) => (
-          <button
-            key={pdv.id}
-            onClick={() => onSelect(pdv)}
-            className="w-full text-left px-2 py-1.5 hover:bg-paper-2 rounded text-[0.75rem] flex items-center gap-2"
-            data-testid={`pdv-${pdv.id}`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${
-                pdv.statut === "cale" ? "bg-green-500" : "bg-amber-400"
-              }`}
-            />
-            <span className="truncate">{pdv.nom}</span>
+          <div key={pdv.id} className="mb-1">
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => onSelect(pdv)}
+                className="flex-1 text-left px-2 py-1.5 hover:bg-paper-2 rounded text-[0.75rem] flex items-center gap-2"
+                data-testid={`pdv-${pdv.id}`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    pdv.statut === "cale" ? "bg-green-500" : "bg-amber-400"
+                  }`}
+                />
+                <span className="truncate">{pdv.nom}</span>
+              </button>
+              {pdv.camera.x === 0 && pdv.camera.y === 0 && (
+                <button
+                  onClick={() => onPlacer(pdv)}
+                  className="text-[0.65rem] text-brass hover:text-brass-soft px-1"
+                  title="Placer la caméra sur le plan"
+                  data-testid={`pdv-placer-${pdv.id}`}
+                >
+                  📍
+                </button>
+              )}
+            </div>
+            {/* Indicateur focale estimée + sélecteur d'objectif */}
             {!pdv.exif.focale_35mm && (
-              <span className="text-[0.6rem] text-amber-600">(estimé)</span>
+              <div className="pl-6 text-[0.6rem]">
+                <button
+                  onClick={() => setFocaleOuverte(focaleOuverte === pdv.id ? null : pdv.id)}
+                  className="text-amber-600 hover:text-amber-700"
+                  data-testid={`pdv-focale-${pdv.id}`}
+                >
+                  Focale estimée ▾
+                </button>
+                {focaleOuverte === pdv.id && (
+                  <div className="mt-1 bg-white border border-hair-light rounded shadow-sm p-1">
+                    {OBJECTIFS.map((obj) => (
+                      <button
+                        key={obj.focale}
+                        onClick={() => choisirFocale(pdv.id, obj.focale)}
+                        className="block w-full text-left px-2 py-1 hover:bg-paper-2 rounded text-[0.65rem]"
+                        data-testid={`pdv-obj-${obj.focale}`}
+                      >
+                        {obj.label}
+                      </button>
+                    ))}
+                    <div className="flex gap-1 mt-1 px-1">
+                      <input
+                        type="text"
+                        placeholder="Focale mm"
+                        value={focaleSaisie}
+                        onChange={(e) => setFocaleSaisie(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") validerFocaleSaisie(pdv.id); }}
+                        className="flex-1 border border-hair-light rounded px-1 py-0.5 text-[0.65rem] w-16"
+                        data-testid="input-focale-custom"
+                      />
+                      <button
+                        onClick={() => validerFocaleSaisie(pdv.id)}
+                        className="text-[0.65rem] text-brass hover:text-brass-soft px-1"
+                      >
+                        OK
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
-          </button>
+          </div>
         ))}
       </div>
 
@@ -114,6 +191,7 @@ async function importerPhoto(file: File, projetId: string, zoneId: string | null
       "Orientation",
       "DateTimeOriginal",
     ]);
+
     if (raw) {
       exifData = {
         marque: raw.Make ?? null,
@@ -173,11 +251,9 @@ async function reencoder(
       let sw = img.naturalWidth;
       let sh = img.naturalHeight;
 
-      // Orientation EXIF (5-8 = dimensions inversées)
       const flip = orientation >= 5 && orientation <= 8;
       if (flip) [sw, sh] = [sh, sw];
 
-      // Redimensionner
       const scale = Math.min(1, maxPx / Math.max(sw, sh));
       const dw = Math.round(sw * scale);
       const dh = Math.round(sh * scale);
@@ -187,7 +263,6 @@ async function reencoder(
       canvas.height = dh;
       const ctx = canvas.getContext("2d")!;
 
-      // Appliquer la transformation d'orientation
       appliquerOrientation(ctx, orientation, dw, dh);
       ctx.drawImage(img, 0, 0, flip ? dh : dw, flip ? dw : dh);
 

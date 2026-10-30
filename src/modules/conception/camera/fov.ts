@@ -30,3 +30,8 @@ export function vfovFromFocal35mm(focale35mm: number, aspect: number): number {
 
   return vfov / DEG;
 }
+
+/** Normalise un cap en degrés dans l'intervalle [0, 360[. */
+export function normaliserCap(cap: number): number {
+  return ((cap % 360) + 360) % 360;
+}

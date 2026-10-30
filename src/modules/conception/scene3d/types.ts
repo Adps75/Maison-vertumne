@@ -24,6 +24,16 @@ export interface DonneesScene3D {
   vegetaux: Vegetal3D[];
   /** Fonction altitude relative en un point du plan. Null si pas de relief. */
   altitudeEn: ((x: number, y: number) => number) | null;
+  /** Points cotés (pour affichage dans le calage). */
+  pointsCotes: PointCote3D[];
+  /** Contour de la zone active (pour affichage dans le calage). */
+  zoneContour: Pt[] | null;
+}
+
+export interface PointCote3D {
+  x: number;
+  y: number;
+  altitudeRelative: number;
 }
 
 export interface Surface3D {

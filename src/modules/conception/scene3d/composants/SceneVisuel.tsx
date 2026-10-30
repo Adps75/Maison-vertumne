@@ -27,9 +27,10 @@ interface SceneVisuelProps {
   camera: CameraParams;
   soleil: SoleilParams;
   altitudeEn: (x: number, y: number) => number;
+  photoAspect?: number;
 }
 
-export function SceneVisuel({ donnees, camera, soleil, altitudeEn }: SceneVisuelProps) {
+export function SceneVisuel({ donnees, camera, soleil, altitudeEn, photoAspect }: SceneVisuelProps) {
   return (
     <Canvas
       shadows
@@ -38,7 +39,7 @@ export function SceneVisuel({ donnees, camera, soleil, altitudeEn }: SceneVisuel
       style={{ background: "transparent" }}
     >
       <Nettoyeur />
-      <CameraController params={camera} altitudeEn={altitudeEn} />
+      <CameraController params={camera} altitudeEn={altitudeEn} photoAspect={photoAspect} />
       <EclairageVisuel emprise={donnees.emprise} soleil={soleil} />
       <Suspense fallback={null}>
         <Vegetaux vegetaux={donnees.vegetaux} />
@@ -57,9 +58,11 @@ export function SceneVisuel({ donnees, camera, soleil, altitudeEn }: SceneVisuel
 function CameraController({
   params,
   altitudeEn,
+  photoAspect,
 }: {
   params: CameraParams;
   altitudeEn: (x: number, y: number) => number;
+  photoAspect?: number;
 }) {
   const { camera, size } = useThree();
 
@@ -67,13 +70,13 @@ function CameraController({
     const { position, quaternion, fov } = cameraParamsVersThree(params, altitudeEn);
     const cam = camera as THREE.PerspectiveCamera;
     cam.fov = fov;
-    cam.aspect = size.width / size.height;
+    cam.aspect = photoAspect ?? (size.width / size.height);
     cam.near = 0.1;
     cam.far = 1000;
     camera.position.copy(position);
     camera.quaternion.copy(quaternion);
     cam.updateProjectionMatrix();
-  }, [params, altitudeEn, camera, size]);
+  }, [params, altitudeEn, camera, size, photoAspect]);
 
   return null;
 }

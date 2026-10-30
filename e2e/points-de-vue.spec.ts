@@ -1,6 +1,6 @@
 /**
- * Tests E2E — Points de vue photo, calage caméra et visuel.
- * Photo de test synthétique (canvas 800×600), pas d'EXIF (vérifie "estimé").
+ * Tests E2E — Points de vue photo, calage caméra en 4 étapes et visuel.
+ * Photo de test synthétique (canvas 800×600), pas d'EXIF.
  */
 
 import { test, expect } from "@playwright/test";
@@ -48,7 +48,6 @@ async function creerPhotoTest(page: import("@playwright/test").Page): Promise<vo
     canvas.width = 800;
     canvas.height = 600;
     const ctx = canvas.getContext("2d")!;
-    // Fond bleu ciel + rectangle vert (jardin)
     ctx.fillStyle = "#87CEEB";
     ctx.fillRect(0, 0, 800, 600);
     ctx.fillStyle = "#228B22";
@@ -66,170 +65,140 @@ async function creerPhotoTest(page: import("@playwright/test").Page): Promise<vo
   });
 }
 
-test.describe.serial("Points de vue", () => {
+test.describe.serial("Points de vue — assistant calage", () => {
   test.setTimeout(180_000);
   test.skip(() => !process.env.E2E_EMAIL?.trim(), "E2E_EMAIL non défini");
 
-  test("setup : créer un projet", async ({ page }) => {
+  test("setup : créer un projet et importer une photo", async ({ page }) => {
     projetId = await creerProjet(page);
     expect(projetId).toBeTruthy();
-  });
 
-  test("importer une photo de test", async ({ page }) => {
-    await page.goto(`/conception/${projetId}`);
-    await page.waitForTimeout(4000);
-
-    // Étape 5
+    // Aller à l'étape 5 et importer
     await page.locator("[data-testid='etape-5']").click();
     await page.waitForTimeout(2000);
-
-    // Le panneau doit être visible
     await expect(page.locator("[data-testid='panneau-points-de-vue']")).toBeVisible({ timeout: 5000 });
-
-    // Importer la photo synthétique
     await creerPhotoTest(page);
     await page.waitForTimeout(5000);
-
-    // La photo doit apparaître dans le panneau
     const items = page.locator("[data-testid^='pdv-']");
     await expect(items.first()).toBeVisible({ timeout: 10000 });
-
-    // L'indicateur "(estimé)" doit être visible (pas d'EXIF)
-    await expect(page.locator("text=(estimé)").first()).toBeVisible({ timeout: 3000 });
   });
 
-  test("ouvrir le calage, modifier un réglage au clavier", async ({ page }) => {
+  test("parcours complet : 4 étapes du calage avec captures", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/conception/${projetId}`);
     await page.waitForTimeout(4000);
 
     await page.locator("[data-testid='etape-5']").click();
     await page.waitForTimeout(2000);
 
-    // Cliquer sur le premier point de vue
+    // Ouvrir le PDV
     const pdvBtn = page.locator("[data-testid^='pdv-']").first();
     await expect(pdvBtn).toBeVisible({ timeout: 5000 });
     await pdvBtn.click();
     await page.waitForTimeout(2000);
 
-    // La vue calage doit s'ouvrir
+    // --- ÉTAPE 1 : Où étiez-vous ? ---
     await expect(page.locator("[data-testid='vue-calage']")).toBeVisible({ timeout: 5000 });
+    const etapeText = page.locator("[data-testid='calage-etape']");
+    await expect(etapeText).toContainText("Étape 1 sur 4");
 
-    // Lire la valeur du cap
-    const capValue = page.locator("[data-testid='slider-cap-value']");
-    const capBefore = await capValue.textContent();
+    // Calage couvre tout le viewport
+    const calageBox = await page.locator("[data-testid='vue-calage']").boundingBox();
+    expect(calageBox).toBeTruthy();
+    if (calageBox) {
+      expect(calageBox.width).toBeGreaterThan(1400);
+      expect(calageBox.height).toBeGreaterThan(850);
+    }
 
-    // Appuyer sur flèche droite → le cap doit changer
-    await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(300);
-    const capAfter = await capValue.textContent();
-    expect(capAfter).not.toBe(capBefore);
+    // Suivant désactivé sans placement
+    const btnSuivant = page.locator("[data-testid='btn-suivant']");
+    await expect(btnSuivant).toBeDisabled();
 
-    // Enregistrer
-    await page.locator("[data-testid='btn-enregistrer-calage']").click();
-    await page.waitForTimeout(2000);
+    // Deux clics sur le plan
+    const planCanvas = page.locator("[data-testid='plan-placement']");
+    await expect(planCanvas).toBeVisible({ timeout: 5000 });
+    const box = await planCanvas.boundingBox();
+    expect(box).toBeTruthy();
+    if (box) {
+      await page.mouse.click(box.x + box.width * 0.4, box.y + box.height * 0.5);
+      await page.waitForTimeout(300);
+      await expect(btnSuivant).toBeDisabled(); // pas de direction encore
+      await page.mouse.click(box.x + box.width * 0.7, box.y + box.height * 0.5);
+      await page.waitForTimeout(300);
+      await expect(btnSuivant).toBeEnabled();
+    }
+
+    await page.screenshot({ path: "e2e/screenshots/calage-etape-1.png" });
+    await btnSuivant.click();
+    await page.waitForTimeout(1000);
+
+    // --- ÉTAPE 2 : Quel objectif ? ---
+    await expect(etapeText).toContainText("Étape 2 sur 4", { timeout: 3000 });
+    await expect(page.locator("[data-testid='calage-etape-2']")).toBeVisible({ timeout: 3000 });
+
+    await page.screenshot({ path: "e2e/screenshots/calage-etape-2.png" });
+
+    // Choisir Principal (26 mm)
+    await page.locator("[data-testid='btn-objectif-26']").click();
+    await page.waitForTimeout(1000);
+
+    // --- ÉTAPE 3 : Alignez la maison ---
+    await expect(etapeText).toContainText("Étape 3 sur 4", { timeout: 3000 });
+    await expect(page.locator("[data-testid='calage-etape-3']")).toBeVisible({ timeout: 3000 });
+    await expect(page.locator("[data-testid='photo-calage']")).toBeVisible({ timeout: 5000 });
+
+    // Grille masquée par défaut
+    const btnRelief = page.locator("[data-testid='btn-afficher-relief']");
+    await expect(btnRelief).toContainText("Afficher le relief");
+
+    // Réglages fermés par défaut
+    await expect(page.locator("text=Réglages précis")).not.toBeVisible();
+
+    await page.screenshot({ path: "e2e/screenshots/calage-etape-3.png" });
+
+    // Suivant → étape 4
+    await page.locator("[data-testid='btn-suivant']").click();
+    await page.waitForTimeout(1000);
+
+    // --- ÉTAPE 4 : C'est calé ---
+    await expect(etapeText).toContainText("Étape 4 sur 4", { timeout: 3000 });
+    await expect(page.locator("[data-testid='calage-etape-4']")).toBeVisible({ timeout: 3000 });
+
+    await page.screenshot({ path: "e2e/screenshots/calage-etape-4.png" });
+
+    // Valider → passage au visuel
+    await page.locator("[data-testid='btn-valider-calage']").click();
+    await page.waitForTimeout(3000);
+    await expect(page.locator("[data-testid='vue-visuel']")).toBeVisible({ timeout: 5000 });
+
+    // Fermer le visuel
+    await page.locator("[data-testid='btn-retour-visuel']").click();
+    await page.waitForTimeout(500);
   });
 
-  test("recharger : les réglages sont conservés", async ({ page }) => {
+  test("cap ≠ 0 après le calage", async ({ page }) => {
     await page.goto(`/conception/${projetId}`);
     await page.waitForTimeout(4000);
 
     await page.locator("[data-testid='etape-5']").click();
     await page.waitForTimeout(2000);
 
-    // Ouvrir le premier point de vue
     const pdvBtn = page.locator("[data-testid^='pdv-']").first();
     await expect(pdvBtn).toBeVisible({ timeout: 5000 });
     await pdvBtn.click();
     await page.waitForTimeout(2000);
 
-    // Le cap ne doit pas être à 0 (il a été modifié et enregistré)
+    // Le PDV a été calé, donc on doit être à l'étape 3 (pas 1)
+    await expect(page.locator("[data-testid='calage-etape']")).toContainText("Étape 3 sur 4", { timeout: 5000 });
+
+    // Ouvrir les réglages pour vérifier le cap
+    await page.locator("[data-testid='panneau-reglages']").click();
+    await page.waitForTimeout(300);
+
     const capValue = await page.locator("[data-testid='slider-cap-value']").textContent();
     expect(capValue).not.toBe("0.0°");
 
     await page.locator("[data-testid='btn-retour-calage']").click();
-    await page.waitForTimeout(500);
-  });
-
-  test("passer en mode Visuel et vérifier les végétaux", async ({ page }) => {
-    await page.goto(`/conception/${projetId}`);
-    await page.waitForTimeout(4000);
-
-    // D'abord poser une plante (étape 4)
-    await page.locator("[data-testid='etape-4']").click();
-    await page.waitForTimeout(500);
-
-    const planteBtn = page.locator("button").filter({ hasText: /⌀.*m$/ }).first();
-    if (await planteBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await planteBtn.click();
-      await page.waitForTimeout(500);
-      const canvas = page.locator("canvas").first();
-      const box = await canvas.boundingBox();
-      if (box) {
-        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-        await page.waitForTimeout(1000);
-      }
-    }
-
-    // Étape 5 → ouvrir le point de vue → mode Visuel
-    await page.locator("[data-testid='etape-5']").click();
-    await page.waitForTimeout(2000);
-
-    const pdvBtn = page.locator("[data-testid^='pdv-']").first();
-    await expect(pdvBtn).toBeVisible({ timeout: 5000 });
-    await pdvBtn.click();
-    await page.waitForTimeout(2000);
-
-    // Passer en visuel
-    await page.locator("[data-testid='btn-mode-visuel']").click();
-    await page.waitForTimeout(3000);
-
-    await expect(page.locator("[data-testid='vue-visuel']")).toBeVisible({ timeout: 5000 });
-
-    // Vérifier via __visuelTest
-    const testData = await page.waitForFunction(
-      () => (window as unknown as Record<string, unknown>).__visuelTest,
-      null,
-      { timeout: 10000 },
-    ).catch(() => null);
-
-    if (testData) {
-      const data = await testData.jsonValue() as { vegetaux_rendus: number };
-      expect(typeof data.vegetaux_rendus).toBe("number");
-    }
-
-    // Fermer
-    await page.locator("[data-testid='btn-retour-visuel']").click();
-    await page.waitForTimeout(500);
-  });
-
-  test("export PNG produit une image aux dimensions de la photo", async ({ page }) => {
-    await page.goto(`/conception/${projetId}`);
-    await page.waitForTimeout(4000);
-
-    await page.locator("[data-testid='etape-5']").click();
-    await page.waitForTimeout(2000);
-
-    const pdvBtn = page.locator("[data-testid^='pdv-']").first();
-    if (!(await pdvBtn.isVisible({ timeout: 3000 }).catch(() => false))) return;
-    await pdvBtn.click();
-    await page.waitForTimeout(2000);
-
-    // Passer en visuel
-    await page.locator("[data-testid='btn-mode-visuel']").click();
-    await page.waitForTimeout(3000);
-
-    // Intercepter le téléchargement
-    const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 15000 }).catch(() => null),
-      page.locator("[data-testid='btn-export-png']").click(),
-    ]);
-
-    if (download) {
-      const path = await download.path();
-      expect(path).toBeTruthy();
-    }
-
-    await page.locator("[data-testid='btn-retour-visuel']").click();
     await page.waitForTimeout(500);
   });
 
