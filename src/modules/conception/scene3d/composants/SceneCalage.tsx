@@ -11,6 +11,8 @@ import { Html } from "@react-three/drei";
 import { planVers3D } from "../conversion";
 import { cameraParamsVersThree } from "../../camera/projection";
 import { Nettoyeur } from "./Nettoyeur";
+import { TraitsConstruction } from "./TraitsConstruction";
+import type { TraitPlan } from "../traits-construction";
 
 // ---------------------------------------------------------------------------
 // SceneCalage : scène 3D en fil de fer pour le calage caméra sur photo.
@@ -26,9 +28,14 @@ interface SceneCalageProps {
   afficherGrille?: boolean;
   /** Afficher les contours de surfaces (défaut : true). */
   afficherSurfaces?: boolean;
+  /**
+   * Traits de construction (éléments du plan et zone active, posés sur le relief).
+   * Fournis, ils remplacent le simple contour de zone.
+   */
+  traits?: TraitPlan[];
 }
 
-export function SceneCalage({ donnees, camera, altitudeEn, photoAspect, afficherGrille = true, afficherSurfaces = true }: SceneCalageProps) {
+export function SceneCalage({ donnees, camera, altitudeEn, photoAspect, afficherGrille = true, afficherSurfaces = true, traits }: SceneCalageProps) {
   // Emprise de la grille : zone active si disponible, sinon emprise complète, pas de 2 m
   const empriseGrille = donnees.zoneContour
     ? empriseDepuisContour(donnees.zoneContour)
@@ -49,9 +56,9 @@ export function SceneCalage({ donnees, camera, altitudeEn, photoAspect, afficher
       {afficherSurfaces && (
         <SurfacesContour surfaces={donnees.surfaces} altitudeEn={altitudeEn} />
       )}
-      {donnees.zoneContour && (
-        <ZoneContour points={donnees.zoneContour} altitudeEn={altitudeEn} />
-      )}
+      {traits
+        ? <TraitsConstruction traits={traits} altitudeEn={altitudeEn} />
+        : donnees.zoneContour && <ZoneContour points={donnees.zoneContour} altitudeEn={altitudeEn} />}
       <PointsCotesMarqueurs pointsCotes={donnees.pointsCotes} altitudeEn={altitudeEn} />
     </Canvas>
   );

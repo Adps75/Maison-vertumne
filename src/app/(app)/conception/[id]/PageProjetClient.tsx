@@ -13,6 +13,7 @@ import type { GrilleRelief, PointCote, CourbeDeNiveau } from "@/modules/concepti
 import { altitudeIGN } from "@/modules/conception/terrain/grille";
 import type { PointDeVue, CameraParams, SoleilParams } from "@/modules/conception/camera/types";
 import { normaliserCap, vfovFromFocal35mm } from "@/modules/conception/camera/fov";
+import { useReglagesTraits } from "@/modules/conception/composants/TraitsConstructionControle";
 import { positionValideLaPlusProche, extraireVoisines, detecterConflits, rayonEcartement, type Conflit } from "@/modules/conception/vegetaux/ecartement";
 import { PanneauPointsDeVue } from "@/modules/conception/composants/PanneauPointsDeVue";
 import { VueCalage } from "@/modules/conception/composants/VueCalage";
@@ -1314,6 +1315,9 @@ export function PageProjetClient() {
 
   // Modèle de terrain (grille IGN + points cotés)
   // Contour de la zone active (pour contraindre les végétaux)
+  // Traits de construction dans les vues photo (calage, Visuel)
+  const reglagesTraits = useReglagesTraits(etat.elements, etat.calques, etat.zoneActive);
+
   const zoneContourActive: [number, number][] | null = useMemo(() => {
     if (!etat.zoneActive) return null;
     const zone = etat.elements.get(etat.zoneActive);
@@ -1872,6 +1876,7 @@ export function PageProjetClient() {
           }}
           onClose={() => { setModeVue(null); setPdvActif(null); }}
           onVisuel={() => setModeVue("visuel")}
+          reglagesTraits={reglagesTraits}
         />
       )}
 
@@ -1891,6 +1896,7 @@ export function PageProjetClient() {
           }}
           onClose={() => { setModeVue(null); setPdvActif(null); }}
           onCalage={() => setModeVue("calage")}
+          reglagesTraits={reglagesTraits}
           dispatch={dispatch}
           elements={etat.elements}
           selection={etat.selection}

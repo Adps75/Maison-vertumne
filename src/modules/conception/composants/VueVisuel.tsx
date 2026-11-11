@@ -9,9 +9,15 @@ import type { Action } from "../editeur/reducer";
 import { useInteractionVegetaux3D } from "../scene3d/interaction-vegetaux";
 import { PanneauVegetaux3D } from "./PanneauVegetaux3D";
 import { PanneauProprietes3D } from "./PanneauProprietes3D";
+import { BoutonTraits, type ReglagesTraits } from "./TraitsConstructionControle";
 
 const SceneVisuelDynamic = dynamic(
   () => import("../scene3d/composants/SceneVisuel").then((m) => m.SceneVisuel),
+  { ssr: false },
+);
+
+const SceneTraitsDynamic = dynamic(
+  () => import("../scene3d/composants/SceneTraits").then((m) => m.SceneTraits),
   { ssr: false },
 );
 
@@ -27,9 +33,10 @@ interface Props {
   selection: Set<string>;
   tolerance: number;
   zoneContour?: [number, number][] | null;
+  reglagesTraits: ReglagesTraits;
 }
 
-export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour }: Props) {
+export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour, reglagesTraits }: Props) {
   const [soleil, setSoleil] = useState<SoleilParams>({ ...pdv.soleil });
   const [statutSoleil, setStatutSoleil] = useState<"idle" | "saving" | "saved">("idle");
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -111,7 +118,9 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
     const photoImg = photoRef.current;
     if (!container || !photoImg) return;
 
-    const canvas3d = container.querySelector("canvas");
+    // Scène principale uniquement : les traits de construction (scène superposée)
+    // ne figurent jamais dans l'export.
+    const canvas3d = container.querySelector<HTMLCanvasElement>("[data-scene='principale'] canvas");
     if (!canvas3d) return;
 
     const out = document.createElement("canvas");
@@ -156,6 +165,7 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
         </button>
         <span className="font-medium">{pdv.nom}</span>
         <div className="flex-1" />
+        <BoutonTraits reglages={reglagesTraits} />
         <button
           onClick={onCalage}
           className="bg-stone-700 hover:bg-stone-600 px-3 py-1 rounded text-[0.75rem]"
@@ -211,6 +221,7 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
               }}
               data-testid="canvas-visuel"
             >
+              <div className="absolute inset-0" data-scene="principale">
               <SceneVisuelDynamic
                 donnees={donnees}
                 camera={pdv.camera}
@@ -226,6 +237,17 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
                 dragPositionRef={dragPositionRef}
                 dragElementIdRef={dragElementIdRef}
               />
+              </div>
+              {/* Traits de construction : scène superposée, transparente aux clics, hors export */}
+              <div className="absolute inset-0 pointer-events-none" data-testid="traits-visuel">
+                <SceneTraitsDynamic
+                  donnees={donnees}
+                  camera={pdv.camera}
+                  altitudeEn={altitudeEn}
+                  photoAspect={pdv.largeur_px / pdv.hauteur_px}
+                  traits={reglagesTraits.traits}
+                />
+              </div>
             </div>
           )}
         </div>

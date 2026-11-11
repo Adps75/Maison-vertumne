@@ -28,6 +28,8 @@ export interface VisuelTestData {
   vegetaux: { id: string; position: [number, number]; altitudeRelative: number; hauteur_m: number }[];
   /** Nombre de billboards de végétaux effectivement affichés (textures chargées). */
   vegetauxAffiches: () => number;
+  /** Altitude relative du terrain en un point plan. */
+  altitudeEn: (x: number, y: number) => number;
   /** Projette un point plan (x, y, hauteur) en coordonnées écran (clientX, clientY). */
   versEcran: (x: number, y: number, h: number) => [number, number] | null;
 }
@@ -93,7 +95,7 @@ export function SceneVisuel({
           downScreenRef={downScreenRef}
         />
       )}
-      <DonneesTest vegetaux={donnees.vegetaux} />
+      <DonneesTest vegetaux={donnees.vegetaux} altitudeEn={altitudeEn} />
     </Canvas>
   );
 }
@@ -102,7 +104,7 @@ export function SceneVisuel({
 // CameraController : synchronise la caméra R3F avec les CameraParams.
 // ---------------------------------------------------------------------------
 
-function CameraController({
+export function CameraController({
   params,
   altitudeEn,
   photoAspect,
@@ -188,7 +190,7 @@ function EclairageVisuel({
 // BatimentsOccludeurs : bâtiments invisibles qui masquent les végétaux.
 // ---------------------------------------------------------------------------
 
-function BatimentsOccludeurs({
+export function BatimentsOccludeurs({
   batiments,
   altitudeEn,
 }: {
@@ -290,12 +292,15 @@ function PolygoneOccludeur({
 // TerrainOccludeur : maillage du terrain qui reçoit les ombres et occlut.
 // ---------------------------------------------------------------------------
 
-function TerrainOccludeur({
+export function TerrainOccludeur({
   emprise,
   altitudeEn,
+  profondeurSeule = false,
 }: {
   emprise: [number, number, number, number];
   altitudeEn: (x: number, y: number) => number;
+  /** N'écrit que la profondeur (masque ce qui est derrière, sans ombres ni couleur). */
+  profondeurSeule?: boolean;
 }) {
   const geometry = useMemo(() => {
     const PAS = 0.5;
@@ -351,8 +356,10 @@ function TerrainOccludeur({
   }, [emprise, altitudeEn]);
 
   return (
-    <mesh geometry={geometry} receiveShadow>
-      <shadowMaterial opacity={0.4} transparent depthWrite={true} />
+    <mesh geometry={geometry} receiveShadow={!profondeurSeule}>
+      {profondeurSeule
+        ? <meshBasicMaterial colorWrite={false} depthWrite={true} />
+        : <shadowMaterial opacity={0.4} transparent depthWrite={true} />}
     </mesh>
   );
 }
@@ -361,7 +368,10 @@ function TerrainOccludeur({
 // DonneesTest : expose les données de test en développement.
 // ---------------------------------------------------------------------------
 
-function DonneesTest({ vegetaux }: { vegetaux: DonneesScene3D["vegetaux"] }) {
+function DonneesTest({ vegetaux, altitudeEn }: {
+  vegetaux: DonneesScene3D["vegetaux"];
+  altitudeEn: (x: number, y: number) => number;
+}) {
   const { camera, gl, scene } = useThree();
 
   useEffect(() => {
@@ -375,6 +385,7 @@ function DonneesTest({ vegetaux }: { vegetaux: DonneesScene3D["vegetaux"] }) {
         altitudeRelative: v.altitudeRelative,
         hauteur_m: v.hauteur_m,
       })),
+      altitudeEn,
       vegetauxAffiches: () => {
         let n = 0;
         scene.traverse((o) => { if (typeof o.userData?.vegetalId === "string") n++; });
@@ -392,7 +403,7 @@ function DonneesTest({ vegetaux }: { vegetaux: DonneesScene3D["vegetaux"] }) {
     return () => {
       delete (window as unknown as Record<string, unknown>).__visuelTest;
     };
-  }, [vegetaux, camera, gl, scene]);
+  }, [vegetaux, altitudeEn, camera, gl, scene]);
 
   return null;
 }

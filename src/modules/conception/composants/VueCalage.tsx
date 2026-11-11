@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { PointDeVue, CameraParams } from "../camera/types";
 import type { DonneesScene3D } from "../scene3d/types";
 import { normaliserCap, vfovFromFocal35mm } from "../camera/fov";
+import { BoutonTraits, type ReglagesTraits } from "./TraitsConstructionControle";
 
 const SceneCalageDynamic = dynamic(
   () => import("../scene3d/composants/SceneCalage").then((m) => m.SceneCalage),
@@ -39,12 +40,13 @@ interface Props {
   onFocaleChange: (focale35mm: number) => void;
   onClose: () => void;
   onVisuel: () => void;
+  reglagesTraits: ReglagesTraits;
 }
 
 export function VueCalage({
   pdv, donnees, altitudeEn,
   orthoUrl, orthoEmprise, batiments, parcelles,
-  onSave, onFocaleChange, onClose, onVisuel,
+  onSave, onFocaleChange, onClose, onVisuel, reglagesTraits,
 }: Props) {
   // Determine initial step
   const nonPlace = pdv.camera.x === 0 && pdv.camera.y === 0;
@@ -302,6 +304,7 @@ export function VueCalage({
                     photoAspect={pdv.largeur_px / pdv.hauteur_px}
                     afficherGrille={grilleVisible}
                     afficherSurfaces={false}
+                    traits={reglagesTraits.traits}
                   />
                 </div>
               )}
@@ -312,16 +315,19 @@ export function VueCalage({
                 Molette : zoom de l'objectif. Maj + glisser : déplacer votre position.
               </div>
 
-              {/* Grid toggle */}
+              {/* Relief et traits de construction */}
+              <div className="absolute top-3 left-3 flex gap-2 items-start">
               <button
                 onClick={() => setGrilleVisible((v) => !v)}
-                className={`absolute top-3 left-3 rounded px-3 py-1.5 text-[0.75rem] shadow ${
+                className={`rounded px-3 py-1.5 text-[0.75rem] shadow ${
                   grilleVisible ? "bg-amber-700 text-amber-100" : "bg-stone-800/80 hover:bg-stone-700 text-stone-300"
                 }`}
                 data-testid="btn-afficher-relief"
               >
                 {grilleVisible ? "Masquer le relief" : "Afficher le relief"}
               </button>
+              <BoutonTraits reglages={reglagesTraits} />
+              </div>
             </div>
 
             {/* Collapsible settings */}
