@@ -1,12 +1,18 @@
 "use client";
 
-import { useMemo, useEffect } from "react";
-import { useLoader } from "@react-three/fiber";
+import { useMemo, useEffect, forwardRef } from "react";
+import { useLoader, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { planVers3D } from "../conversion";
 import { garderImageEnCache } from "../cache-textures";
 
-interface SolProps {
+interface TerrainEvents {
+  onPointerDown?: (e: ThreeEvent<PointerEvent>) => void;
+  onPointerMove?: (e: ThreeEvent<PointerEvent>) => void;
+  onPointerUp?: (e: ThreeEvent<PointerEvent>) => void;
+}
+
+interface SolProps extends TerrainEvents {
   orthoUrl: string | null;
   orthoEmprise: [number, number, number, number] | null;
   emprise: [number, number, number, number];
@@ -14,35 +20,40 @@ interface SolProps {
 }
 
 /** Sol texturé avec l'orthophoto ou plan vert simple. */
-export function Sol({ orthoUrl, orthoEmprise, emprise, altitudeEn }: SolProps) {
+export const Sol = forwardRef<THREE.Mesh, SolProps>(function Sol(
+  { orthoUrl, orthoEmprise, emprise, altitudeEn, onPointerDown, onPointerMove, onPointerUp },
+  ref,
+) {
+  const events: TerrainEvents = { onPointerDown, onPointerMove, onPointerUp };
+
   if (orthoUrl && orthoEmprise) {
     if (altitudeEn) {
       return (
         <SolRelief
+          ref={ref}
           orthoUrl={orthoUrl}
           orthoEmprise={orthoEmprise}
           emprise={emprise}
           altitudeEn={altitudeEn}
+          {...events}
         />
       );
     }
-    return <SolTexture orthoUrl={orthoUrl} orthoEmprise={orthoEmprise} />;
+    return <SolTexture ref={ref} orthoUrl={orthoUrl} orthoEmprise={orthoEmprise} {...events} />;
   }
-  return <SolSimple emprise={emprise} />;
-}
+  return <SolSimple ref={ref} emprise={emprise} {...events} />;
+});
 
 /** Sol avec relief, texturé par l'orthophoto. */
-function SolRelief({
-  orthoUrl,
-  orthoEmprise,
-  emprise,
-  altitudeEn,
-}: {
+const SolRelief = forwardRef<THREE.Mesh, {
   orthoUrl: string;
   orthoEmprise: [number, number, number, number];
   emprise: [number, number, number, number];
   altitudeEn: (x: number, y: number) => number;
-}) {
+} & TerrainEvents>(function SolRelief(
+  { orthoUrl, orthoEmprise, emprise, altitudeEn, onPointerDown, onPointerMove, onPointerUp },
+  ref,
+) {
   const texture = useLoader(THREE.TextureLoader, orthoUrl);
 
   useEffect(() => {
@@ -85,7 +96,6 @@ function SolRelief({
       }
     }
 
-    // Indices : 2 triangles par cellule de la grille
     const nbCellsX = nbX - 1;
     const nbCellsY = nbY - 1;
     const indices = new Uint32Array(nbCellsX * nbCellsY * 6);
@@ -118,22 +128,22 @@ function SolRelief({
   }, [emprise, orthoEmprise, altitudeEn]);
 
   return (
-    <mesh geometry={geometry} receiveShadow>
+    <mesh ref={ref} geometry={geometry} receiveShadow
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
       <meshStandardMaterial map={texture} side={THREE.DoubleSide} />
     </mesh>
   );
-}
+});
 
-function SolTexture({
-  orthoUrl,
-  orthoEmprise,
-}: {
+const SolTexture = forwardRef<THREE.Mesh, {
   orthoUrl: string;
   orthoEmprise: [number, number, number, number];
-}) {
+} & TerrainEvents>(function SolTexture(
+  { orthoUrl, orthoEmprise, onPointerDown, onPointerMove, onPointerUp },
+  ref,
+) {
   const texture = useLoader(THREE.TextureLoader, orthoUrl);
 
-  // Garder l'image en cache mémoire pour éviter un retéléchargement
   useEffect(() => {
     if (texture.image instanceof HTMLImageElement) {
       garderImageEnCache(orthoUrl, texture.image);
@@ -150,18 +160,20 @@ function SolTexture({
   const profondeur = orthoEmprise[3] - orthoEmprise[1];
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, cy, cz]} receiveShadow>
+    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} position={[cx, cy, cz]} receiveShadow
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
       <planeGeometry args={[largeur, profondeur]} />
       <meshStandardMaterial map={texture} side={THREE.DoubleSide} />
     </mesh>
   );
-}
+});
 
-function SolSimple({
-  emprise,
-}: {
+const SolSimple = forwardRef<THREE.Mesh, {
   emprise: [number, number, number, number];
-}) {
+} & TerrainEvents>(function SolSimple(
+  { emprise, onPointerDown, onPointerMove, onPointerUp },
+  ref,
+) {
   const [cx, cy, cz] = useMemo(() => {
     const mx = (emprise[0] + emprise[2]) / 2;
     const my = (emprise[1] + emprise[3]) / 2;
@@ -172,9 +184,10 @@ function SolSimple({
   const profondeur = emprise[3] - emprise[1];
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, cy, cz]} receiveShadow>
+    <mesh ref={ref} rotation={[-Math.PI / 2, 0, 0]} position={[cx, cy, cz]} receiveShadow
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
       <planeGeometry args={[largeur, profondeur]} />
       <meshStandardMaterial color="#7CB342" side={THREE.DoubleSide} />
     </mesh>
   );
-}
+});

@@ -1,17 +1,21 @@
 "use client";
 
 import { Suspense, useMemo, useRef, useImperativeHandle, forwardRef, useEffect } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { DonneesScene3D } from "../types";
+import type { RaycastCallbacks } from "../interaction-vegetaux";
+import type { PlanteSelectionnee } from "../../types";
 import { planVers3D } from "../conversion";
 import { Sol } from "./Sol";
 import { Batiments } from "./Batiment";
 import { SurfacesDessinee } from "./SurfaceDessinee";
 import { Vegetaux } from "./Vegetal";
+import { PreviewVegetal } from "./PreviewVegetal";
+import { GestionnairePointeurTerrain } from "./GestionnairePointeurTerrain";
 import { Eclairage } from "./Eclairage";
+import { Nettoyeur } from "./Nettoyeur";
 
 /** Données exposées sur window.__scene3dTest en développement/test uniquement. */
 export interface Scene3DTestData {
@@ -31,11 +35,23 @@ export interface Scene3DRef {
 
 interface Scene3DProps {
   donnees: DonneesScene3D;
+  selection?: Set<string>;
+  planteAPoser?: PlanteSelectionnee | null;
+  previewPositionRef?: React.RefObject<[number, number] | null>;
+  dragPositionRef?: React.RefObject<[number, number] | null>;
+  dragElementIdRef?: React.RefObject<string | null>;
+  isDraggingRef?: React.RefObject<boolean>;
+  raycastCallbacks?: RaycastCallbacks;
+  onDragMove?: (screenX: number, screenY: number, terrainX: number, terrainY: number) => void;
+  downScreenRef?: React.RefObject<[number, number] | null>;
 }
 
-/** Scène 3D complète avec tous les éléments du projet. */
 export const Scene3D = forwardRef<Scene3DRef, Scene3DProps>(
-  function Scene3D({ donnees }, ref) {
+  function Scene3D({
+    donnees, selection, planteAPoser,
+    previewPositionRef, dragPositionRef, dragElementIdRef, isDraggingRef,
+    raycastCallbacks, onDragMove, downScreenRef,
+  }, ref) {
     const controlsRef = useRef<OrbitControlsImpl>(null);
 
     // Exposer les données de test en développement uniquement
@@ -126,7 +142,34 @@ export const Scene3D = forwardRef<Scene3DRef, Scene3DProps>(
           />
           <Batiments batiments={donnees.batiments} altitudeEn={donnees.altitudeEn} />
           <SurfacesDessinee surfaces={donnees.surfaces} altitudeEn={donnees.altitudeEn} />
-          <Vegetaux vegetaux={donnees.vegetaux} />
+          <Vegetaux
+            vegetaux={donnees.vegetaux}
+            selection={selection}
+            dragPositionRef={dragPositionRef}
+            dragElementIdRef={dragElementIdRef}
+            altitudeEn={donnees.altitudeEn}
+          />
+          {planteAPoser && previewPositionRef && (
+            <PreviewVegetal
+              planteId={planteAPoser.id}
+              version={planteAPoser.version}
+              hauteur_m={planteAPoser.hauteur_m}
+              positionRef={previewPositionRef}
+              altitudeEn={donnees.altitudeEn}
+            />
+          )}
+          {raycastCallbacks && (
+            <GestionnairePointeurTerrain
+              emprise={donnees.emprise}
+              altitudeEn={donnees.altitudeEn}
+              callbacks={raycastCallbacks}
+              onDragMove={onDragMove}
+              downScreenRef={downScreenRef}
+            />
+          )}
+          {isDraggingRef && (
+            <OrbitControlsGuard controlsRef={controlsRef} isDraggingRef={isDraggingRef} />
+          )}
           <OrbitControls
             ref={controlsRef}
             target={cameraConfig.target}
@@ -140,36 +183,18 @@ export const Scene3D = forwardRef<Scene3DRef, Scene3DProps>(
   },
 );
 
-// ---------------------------------------------------------------------------
-// Nettoyeur : libère les ressources WebGL au démontage du Canvas.
-// Les images restent en cache mémoire (via cache-textures + useLoader R3F).
-// ---------------------------------------------------------------------------
-
-function disposeMateriau(mat: THREE.Material) {
-  for (const val of Object.values(mat)) {
-    if (val instanceof THREE.Texture) val.dispose();
-  }
-  mat.dispose();
-}
-
-function Nettoyeur() {
-  const { gl, scene } = useThree();
-
-  useEffect(() => {
-    return () => {
-      // 1. Dispose de chaque geometry, material et texture de la scène
-      scene.traverse((obj) => {
-        if (!(obj instanceof THREE.Mesh)) return;
-        obj.geometry?.dispose();
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const mat of mats) disposeMateriau(mat);
-      });
-
-      // 2. Force la perte du contexte WebGL (libère le slot)
-      gl.forceContextLoss();
-      gl.dispose();
-    };
-  }, [gl, scene]);
-
+/** Désactive les OrbitControls pendant un drag de plante (via useFrame, pas de re-render). */
+function OrbitControlsGuard({
+  controlsRef,
+  isDraggingRef,
+}: {
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  isDraggingRef: React.RefObject<boolean>;
+}) {
+  useFrame(() => {
+    if (controlsRef.current) {
+      controlsRef.current.enabled = !isDraggingRef.current;
+    }
+  });
   return null;
 }

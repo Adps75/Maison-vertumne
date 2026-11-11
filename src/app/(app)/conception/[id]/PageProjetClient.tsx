@@ -11,6 +11,12 @@ import { genererCourbes } from "@/modules/conception/terrain/courbes";
 import { normaliserNombre } from "@/modules/conception/editeur/commandes";
 import type { GrilleRelief, PointCote, CourbeDeNiveau } from "@/modules/conception/terrain/types";
 import { altitudeIGN } from "@/modules/conception/terrain/grille";
+import type { PointDeVue, CameraParams, SoleilParams } from "@/modules/conception/camera/types";
+import { normaliserCap, vfovFromFocal35mm } from "@/modules/conception/camera/fov";
+import { positionValideLaPlusProche, extraireVoisines, detecterConflits, rayonEcartement, type Conflit } from "@/modules/conception/vegetaux/ecartement";
+import { PanneauPointsDeVue } from "@/modules/conception/composants/PanneauPointsDeVue";
+import { VueCalage } from "@/modules/conception/composants/VueCalage";
+import { VueVisuel } from "@/modules/conception/composants/VueVisuel";
 import {
   reducer,
   etatInitial,
@@ -41,6 +47,7 @@ import type { Pt } from "@/modules/conception/geo/plan";
 import { hitTestGeometrique, elementSurvole, selectionParRectangle } from "@/modules/conception/editeur/selection";
 import { PanneauVegetaux } from "@/modules/conception/composants/PanneauVegetaux";
 import { PanneauListeVegetaux } from "@/modules/conception/composants/PanneauListeVegetaux";
+// PanneauConflits est intégré dans PanneauListeVegetaux
 import { calculerNouveauDiametre } from "@/modules/conception/editeur/poignees";
 import {
   appliquerDeplacementPoignee,
@@ -103,6 +110,18 @@ export function PageProjetClient() {
   const [courbesVisibles, setCourbesVisibles] = useState(false);
   const [pointCoteEnCours, setPointCoteEnCours] = useState<Pt | null>(null);
   const [reliefChargement, setReliefChargement] = useState(false);
+
+  // Points de vue photo (étape 5)
+  const [pointsDeVue, setPointsDeVue] = useState<PointDeVue[]>([]);
+  const [pdvActif, setPdvActif] = useState<PointDeVue | null>(null);
+  const [modeVue, setModeVue] = useState<"calage" | "visuel" | null>(null);
+  const [placementPdv, setPlacementPdv] = useState<{
+    pdvId: string;
+    phase: "position" | "direction";
+    position?: [number, number];
+  } | null>(null);
+  const [reliefMessage, setReliefMessage] = useState<string | null>(null);
+  const [tolerance, setTolerance] = useState(0.30);
 
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
@@ -180,6 +199,9 @@ export function PageProjetClient() {
           setProjet(projetData.projet);
           setUpdatedAt(projetData.projet.updated_at);
           setAltRefNgf(projetData.projet.altitude_reference_ngf ?? null);
+          if (typeof projetData.projet.tolerance_chevauchement === "number") {
+            setTolerance(projetData.projet.tolerance_chevauchement);
+          }
           // Charger la grille de relief si disponible
           if (projetData.projet.relief_url) {
             fetch(projetData.projet.relief_url)
@@ -193,6 +215,13 @@ export function PageProjetClient() {
         if (elementsData.ok && elementsData.elements) {
           dispatch({ type: "CHARGER_ELEMENTS", elements: elementsData.elements });
         }
+      })
+      .then(() => {
+        // Charger les points de vue
+        fetch(`/api/conception/projets/${id}/points-de-vue`)
+          .then((r) => r.json())
+          .then((d) => { if (d.ok) setPointsDeVue(d.points_de_vue); })
+          .catch(() => {});
       })
       .catch(() => setErreur("Impossible de charger le projet."))
       .finally(() => setChargement(false));
@@ -211,6 +240,49 @@ export function PageProjetClient() {
       }
     }
   }, [projet]);
+
+  // Auto-récupération du relief à l'étape 5 si absent
+  useEffect(() => {
+    if (etat.etape !== 5 || !projet || grilleRelief || reliefChargement) return;
+    // Pas de grille chargée → tenter de la récupérer automatiquement
+    setReliefChargement(true);
+    setReliefMessage("Chargement du relief…");
+    (async () => {
+      try {
+        // D'abord vérifier si le relief existe déjà côté serveur
+        const checkRes = await fetch(`/api/conception/projets/${id}/relief`);
+        const checkData = await checkRes.json();
+        if (checkData.relief_url) {
+          setAltRefNgf(checkData.altitude_reference_ngf);
+          const g = await fetch(checkData.relief_url).then((r) => r.json());
+          setGrilleRelief(g);
+          setReliefMessage(null);
+          return;
+        }
+        // Sinon, lancer la récupération IGN
+        const res = await fetch(`/api/conception/projets/${id}/relief`, { method: "POST" });
+        const data = await res.json();
+        if (data.ok && data.relief_disponible) {
+          setAltRefNgf(data.altitude_reference_ngf);
+          const reliefRes = await fetch(`/api/conception/projets/${id}/relief`);
+          const reliefData = await reliefRes.json();
+          if (reliefData.relief_url) {
+            const g = await fetch(reliefData.relief_url).then((r) => r.json());
+            setGrilleRelief(g);
+          }
+          setReliefMessage(null);
+        } else if (data.ok && !data.relief_disponible) {
+          setReliefMessage("Relief indisponible — terrain plat.");
+        } else {
+          setReliefMessage("Erreur de chargement du relief.");
+        }
+      } catch {
+        setReliefMessage("Erreur de chargement du relief.");
+      } finally {
+        setReliefChargement(false);
+      }
+    })();
+  }, [etat.etape, projet, grilleRelief, reliefChargement, id]);
 
   // Garder saisieRef en sync
   useEffect(() => { saisieRef.current = etat.saisie; }, [etat.saisie]);
@@ -677,10 +749,20 @@ export function PageProjetClient() {
         case "planter": {
           if (!etat.planteSelectionnee) break;
           const ps = etat.planteSelectionnee;
+          // Écartement : calculer la position valide (sauf si Maj enfoncé)
+          const positionPlante = shiftKeyRef.current
+            ? pt
+            : positionValideLaPlusProche(
+                { id: "", position: [pt[0], pt[1]], rayon: rayonEcartement({ largeur_3ans_m: ps.largeur_3ans_m, diametre_m: ps.diametre_m }), categorie: ps.categorie, forme: ps.forme },
+                [pt[0], pt[1]],
+                extraireVoisines(etat.elements),
+                tolerance,
+                zoneContourActive,
+              );
           const element: Element = {
             id: genererIdLocal(),
             type: "vegetal",
-            geometrie: { type: "point", position: pt },
+            geometrie: { type: "point", position: positionPlante },
             calque: "vegetal",
             statut: "nouveau",
             hauteur: ps.hauteur_m,
@@ -689,14 +771,16 @@ export function PageProjetClient() {
               nom_commun: ps.nom_commun,
               nom_latin: ps.nom_latin,
               diametre_m: ps.diametre_m,
+              largeur_3ans_m: ps.largeur_3ans_m,
               hauteur_m: ps.hauteur_m,
               version: ps.version,
+              categorie: ps.categorie,
+              forme: ps.forme,
               rotation: 0,
             },
             ordre: etat.elements.size,
           };
           dispatch({ type: "CREER_ELEMENT", element });
-          // L'outil reste actif pour poser d'autres plantes
           break;
         }
 
@@ -898,6 +982,40 @@ export function PageProjetClient() {
         return;
       }
 
+      // 3b. Placement de caméra (deux clics sur le plan)
+      if (placementPdv && pointerDownPtRef.current) {
+        if (placementPdv.phase === "position") {
+          setPlacementPdv({ ...placementPdv, phase: "direction", position: [finalPt[0], finalPt[1]] });
+          dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: "Cliquez pour indiquer la direction du regard" });
+          pointerDownPtRef.current = null;
+          return;
+        }
+        if (placementPdv.phase === "direction" && placementPdv.position) {
+          const [x1, y1] = placementPdv.position;
+          const [x2, y2] = [finalPt[0], finalPt[1]];
+          const cap = normaliserCap(Math.atan2(x2 - x1, y2 - y1) * 180 / Math.PI);
+
+          // Sauvegarder la position et le cap
+          const pdv = pointsDeVue.find((p) => p.id === placementPdv.pdvId);
+          if (pdv) {
+            const newCam: CameraParams = { ...pdv.camera, x: x1, y: y1, cap };
+            fetch(`/api/conception/projets/${id}/points-de-vue/${pdv.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ camera: newCam }),
+            }).catch(() => {});
+            const updated = { ...pdv, camera: newCam };
+            setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+            setPdvActif(updated);
+            setModeVue("calage");
+          }
+          setPlacementPdv(null);
+          dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
+          pointerDownPtRef.current = null;
+          return;
+        }
+      }
+
       // 4. Clic simple (pointerdown sans drag)
       if (pointerDownPtRef.current) {
         onClicCanevas(finalPt);
@@ -905,7 +1023,7 @@ export function PageProjetClient() {
         pointerDownElementRef.current = null;
       }
     },
-    [rectDebut, etat.outil, etat.elements, etat.calques, etat.etape, poigneeActive, onClicCanevas],
+    [rectDebut, etat.outil, etat.elements, etat.calques, etat.etape, poigneeActive, onClicCanevas, placementPdv, pointsDeVue, id],
   );
 
   // Saisie Entrée/Espace
@@ -1103,6 +1221,9 @@ export function PageProjetClient() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // 3D ouverte : seul Échap ferme l'aperçu
+      // Vues photo calage/visuel : clavier suspendu
+      if (modeVue) return;
+
       if (apercu3D) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1174,7 +1295,7 @@ export function PageProjetClient() {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [etat.saisie, etat.elements, sommetSelectionne, onEntreeSaisie, apercu3D]);
+  }, [etat.saisie, etat.elements, sommetSelectionne, onEntreeSaisie, apercu3D, modeVue]);
 
   // Sélection comme tableau d'éléments pour PanneauInfos
   const selectionElements = Array.from(etat.selection)
@@ -1192,6 +1313,19 @@ export function PageProjetClient() {
   const aVegetaux = Array.from(etat.elements.values()).some((el) => el.type === "vegetal");
 
   // Modèle de terrain (grille IGN + points cotés)
+  // Contour de la zone active (pour contraindre les végétaux)
+  const zoneContourActive: [number, number][] | null = useMemo(() => {
+    if (!etat.zoneActive) return null;
+    const zone = etat.elements.get(etat.zoneActive);
+    if (!zone || !("points" in zone.geometrie)) return null;
+    return zone.geometrie.points.map(([x, y]) => [x, y] as [number, number]);
+  }, [etat.zoneActive, etat.elements]);
+
+  // Conflits végétaux
+  const conflitsVegetaux: Conflit[] = useMemo(() => {
+    return detecterConflits(extraireVoisines(etat.elements), tolerance);
+  }, [etat.elements, tolerance]);
+
   const pointsCotes: PointCote[] = useMemo(() => {
     const pcs: PointCote[] = [];
     for (const el of etat.elements.values()) {
@@ -1244,7 +1378,7 @@ export function PageProjetClient() {
   }, [courbesVisibles, altitudeEn, projet, etat.zoneActive, etat.elements]);
 
   // Préparer les données 3D (depuis l'état en mémoire, pas un fetch)
-  const afficher3D = etat.etape === 5 || apercu3D;
+  const afficher3D = etat.etape === 5 || apercu3D || modeVue !== null;
   const donnees3D = useMemo(() => {
     if (!afficher3D || !projet) return null;
     const projetPour3D: ProjetPour3D = {
@@ -1353,9 +1487,13 @@ export function PageProjetClient() {
     );
   }
 
+  // Quand le calage ou le visuel est ouvert, on masque l'éditeur pour
+  // garantir un plein écran propre (pas de chevauchement, pas de z-index)
+  const editeurMasque = modeVue !== null;
+
   return (
     <div className="h-screen flex flex-col bg-paper">
-      <header className="border-b border-hair-light px-4 py-2 flex items-center justify-between shrink-0">
+      <header className="border-b border-hair-light px-4 py-2 flex items-center justify-between shrink-0" style={editeurMasque ? { display: "none" } : undefined}>
         <div className="flex items-center gap-3">
           <Link href="/conception" className="text-brass hover:text-brass-soft text-[0.82rem]">
             &larr;
@@ -1422,16 +1560,17 @@ export function PageProjetClient() {
           </form>
         </div>
       </header>
-      <BarreEtapes
-        etape={etat.etape}
-        aZones={aZones}
-        aVegetaux={aVegetaux}
-        dispatch={dispatch}
-      />
-      <div className="flex-1 relative overflow-hidden" data-testid="canevas-container">
-        {/* Éditeur 2D (masqué à l'étape 5, présent en mémoire) */}
-        {etat.etape !== 5 && (
-          <CanevasEditeur
+      {!editeurMasque && (
+        <BarreEtapes
+          etape={etat.etape}
+          aZones={aZones}
+          aVegetaux={aVegetaux}
+          dispatch={dispatch}
+        />
+      )}
+      <div className="flex-1 relative overflow-hidden" data-testid="canevas-container" style={editeurMasque ? { display: "none" } : undefined}>
+        {/* Éditeur 2D — visible à toutes les étapes */}
+        <CanevasEditeur
             parcelles={projet.parcelles_geojson}
             batiments={projet.batiments_geojson ?? []}
             orthoUrl={projet.ortho_url}
@@ -1461,15 +1600,17 @@ export function PageProjetClient() {
             zoneActive={etat.zoneActive}
             planteSelectionnee={etat.planteSelectionnee}
             courbes={courbes}
+            pointsDeVue={pointsDeVue.map((p, i) => ({
+              id: p.id,
+              nom: p.nom || `Vue ${i + 1}`,
+              camera: p.camera,
+              statut: p.statut,
+            }))}
+            onSelectPdv={(pdvId) => {
+              const pdv = pointsDeVue.find((p) => p.id === pdvId);
+              if (pdv) { setPdvActif(pdv); setModeVue(pdv.statut === "cale" ? "visuel" : "calage"); }
+            }}
           />
-        )}
-
-        {/* Vue 3D à l'étape 5 */}
-        {etat.etape === 5 && donnees3D && (
-          <div className="w-full h-full bg-stone-900" data-testid="conteneur-3d">
-            <Scene3DDynamic ref={sceneRef} donnees={donnees3D} />
-          </div>
-        )}
 
         {/* Panneaux de l'éditeur 2D (masqués à l'étape 5) */}
         {etat.etape !== 5 && (
@@ -1512,6 +1653,16 @@ export function PageProjetClient() {
                 <PanneauListeVegetaux
                   elements={etat.elements}
                   dispatch={dispatch}
+                  conflits={conflitsVegetaux}
+                  onCadrerConflit={(ids) => {
+                    dispatch({ type: "SELECTIONNER", ids });
+                    const pts: Pt[] = [];
+                    for (const id of ids) {
+                      const el = etat.elements.get(id);
+                      if (el && el.geometrie.type === "point") pts.push(el.geometrie.position);
+                    }
+                    if (pts.length > 0) cadrerSurZone(pts);
+                  }}
                 />
               </>
             )}
@@ -1587,17 +1738,62 @@ export function PageProjetClient() {
           </>
         )}
 
-        {/* Contrôles étape 5 : sélecteur zone et vue piéton */}
+        {/* Contrôles étape 5 : panneau points de vue + placement + relief */}
         {etat.etape === 5 && (
-          <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-            <button
-              onClick={() => sceneRef.current?.vuePieton()}
-              className="bg-stone-700 hover:bg-stone-600 text-stone-200 rounded px-3 py-1 text-[0.75rem]"
-              data-testid="btn-vue-pieton"
-            >
-              Vue piéton
-            </button>
-          </div>
+          <>
+            {placementPdv && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-stone-800/90 text-stone-200 px-4 py-2 rounded text-[0.82rem] border border-stone-600">
+                {placementPdv.phase === "position"
+                  ? "Cliquez pour positionner la caméra"
+                  : "Cliquez pour indiquer la direction du regard"}
+              </div>
+            )}
+            {reliefMessage && (
+              <div className="absolute bottom-14 left-3 z-10 bg-stone-800/90 text-stone-300 px-3 py-1.5 rounded text-[0.75rem]">
+                {reliefMessage}
+              </div>
+            )}
+            <PanneauPointsDeVue
+              projetId={id}
+              zoneActive={etat.zoneActive}
+              pointsDeVue={pointsDeVue}
+              onSelect={(pdv) => { setPdvActif(pdv); setModeVue(pdv.statut === "cale" ? "visuel" : "calage"); }}
+              onPlacer={(pdv) => {
+                setPlacementPdv({ pdvId: pdv.id, phase: "position" });
+                dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: "Cliquez pour positionner la caméra" });
+              }}
+              onImported={() => {
+                fetch(`/api/conception/projets/${id}/points-de-vue`)
+                  .then((r) => r.json())
+                  .then((d) => { if (d.ok) setPointsDeVue(d.points_de_vue); })
+                  .catch(() => {});
+              }}
+              onRename={async (pdvId, nom) => {
+                await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ nom }),
+                });
+                setPointsDeVue((prev) => prev.map((p) => p.id === pdvId ? { ...p, nom } : p));
+              }}
+              onFocaleChange={async (pdvId, focale35mm) => {
+                const pdv = pointsDeVue.find((p) => p.id === pdvId);
+                if (!pdv) return;
+                const aspect = pdv.largeur_px / pdv.hauteur_px;
+                const fov_v = vfovFromFocal35mm(focale35mm, aspect);
+                const newCam = { ...pdv.camera, fov_v };
+                const newExif = { ...pdv.exif, focale_35mm: focale35mm };
+                await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ camera: newCam, exif: newExif }),
+                });
+                setPointsDeVue((prev) => prev.map((p) =>
+                  p.id === pdvId ? { ...p, camera: newCam, exif: newExif } : p
+                ));
+              }}
+            />
+          </>
         )}
 
         {surfaceParcelle != null && etat.etape !== 5 && (
@@ -1640,6 +1836,68 @@ export function PageProjetClient() {
           </div>
         )}
       </div>
+
+      {/* Vue Calage photo (assistant 4 étapes) — rendu hors du canevas pour couvrir tout */}
+      {modeVue === "calage" && pdvActif && donnees3D && (
+        <VueCalage
+          pdv={pdvActif}
+          donnees={donnees3D}
+          altitudeEn={altitudeEn}
+          orthoUrl={projet.ortho_url}
+          orthoEmprise={projet.ortho_emprise}
+          batiments={projet.batiments_geojson ?? []}
+          parcelles={projet.parcelles_geojson}
+          onSave={async (camera, statut) => {
+            await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ camera, statut }),
+            });
+            const updated = { ...pdvActif, camera, statut };
+            setPdvActif(updated);
+            setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+          }}
+          onFocaleChange={async (focale35mm) => {
+            const aspect = pdvActif.largeur_px / pdvActif.hauteur_px;
+            const fov_v = vfovFromFocal35mm(focale35mm, aspect);
+            const newExif = { ...pdvActif.exif, focale_35mm: focale35mm };
+            await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ exif: newExif, camera: { ...pdvActif.camera, fov_v } }),
+            });
+            const updated = { ...pdvActif, exif: newExif, camera: { ...pdvActif.camera, fov_v } };
+            setPdvActif(updated);
+            setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+          }}
+          onClose={() => { setModeVue(null); setPdvActif(null); }}
+          onVisuel={() => setModeVue("visuel")}
+        />
+      )}
+
+      {/* Vue Visuel photo */}
+      {modeVue === "visuel" && pdvActif && donnees3D && (
+        <VueVisuel
+          pdv={pdvActif}
+          donnees={donnees3D}
+          altitudeEn={altitudeEn}
+          onSaveSoleil={async (soleil) => {
+            await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ soleil }),
+            });
+            setPdvActif((prev) => prev ? { ...prev, soleil } : prev);
+          }}
+          onClose={() => { setModeVue(null); setPdvActif(null); }}
+          onCalage={() => setModeVue("calage")}
+          dispatch={dispatch}
+          elements={etat.elements}
+          selection={etat.selection}
+          tolerance={tolerance}
+          zoneContour={zoneContourActive}
+        />
+      )}
     </div>
   );
 }

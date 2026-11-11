@@ -210,18 +210,19 @@ test.describe.serial("Intégration 3D", () => {
     await page.waitForTimeout(300);
   });
 
-  test("étape 5 : la scène contient la maison et la plante", async ({ page }) => {
+  test("aperçu 3D : la scène contient la maison et la plante", async ({ page }) => {
     await page.goto(`/conception/${projetId}`);
     await page.waitForTimeout(5000);
 
-    // Vérifier qu'il y a des éléments chargés (dont la plante sauvée)
-    const count = await page.locator("[data-testid='element-count']").textContent();
+    // L'aperçu 3D est accessible depuis l'étape 4
+    await page.locator("[data-testid='etape-4']").click();
+    await page.waitForTimeout(2000);
 
-    // Passer à l'étape 5
-    await page.locator("[data-testid='etape-5']").click();
-    await page.waitForTimeout(5000);
+    // Ouvrir l'aperçu 3D
+    await page.locator("[data-testid='btn-apercu-3d']").click();
+    await page.waitForTimeout(3000);
 
-    // Le conteneur 3D doit être visible
+    // Le conteneur 3D doit être visible dans l'overlay
     const conteneur = page.locator("[data-testid='conteneur-3d']");
     await expect(conteneur).toBeVisible({ timeout: 15000 });
 
@@ -238,8 +239,6 @@ test.describe.serial("Intégration 3D", () => {
 
     // Au moins un bâtiment (BD TOPO)
     expect(data.batiments).toBeGreaterThanOrEqual(1);
-    // La plante peut ne pas exister si la bibliothèque est vide (le test est conditionnel)
-    // On vérifie juste que la scène se charge correctement
   });
 
   test("cleanup", async ({ page }) => {

@@ -9,7 +9,9 @@ interface PlanteAPI {
   nom_commun: string;
   nom_latin: string;
   categorie: string;
+  forme: string | null;
   largeur_adulte_m: number | null;
+  largeur_3ans_m?: number | null;
   hauteur_adulte_m: number | null;
   statut: string;
   cout_generation_total: number;
@@ -55,8 +57,11 @@ export function PanneauVegetaux({ dispatch, planteActive }: Props) {
         nom_commun: p.nom_commun,
         nom_latin: p.nom_latin,
         diametre_m: p.largeur_adulte_m ?? 1,
+      largeur_3ans_m: p.largeur_3ans_m ?? null,
         hauteur_m: p.hauteur_adulte_m ?? 1,
         version: p.updated_at ?? "",
+        categorie: p.categorie,
+        forme: p.forme,
       },
     });
   };

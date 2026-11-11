@@ -134,8 +134,12 @@ export interface PlanteSelectionnee {
   nom_commun: string;
   nom_latin: string;
   diametre_m: number;
+  /** Largeur à 3 ans (m), pour l'écartement ; null = 70 % de la largeur adulte. */
+  largeur_3ans_m: number | null;
   hauteur_m: number;
   version: string; // updated_at pour le cache d'image
+  categorie: string;
+  forme: string | null;
 }
 
 // ===================== Étapes du projet =====================

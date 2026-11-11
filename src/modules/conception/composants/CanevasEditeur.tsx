@@ -60,6 +60,10 @@ interface Props {
   planteSelectionnee: PlanteSelectionnee | null;
   courbes?: { altitude: number; points: [number, number][] }[];
   altRefPosition?: [number, number] | null;
+  /** Points de vue pour afficher les caméras sur le plan. */
+  pointsDeVue?: { id: string; nom: string; camera: { x: number; y: number; cap: number; fov_v: number }; statut: string }[];
+  /** Callback quand on clique sur une caméra du plan. */
+  onSelectPdv?: (id: string) => void;
 }
 
 const LAITON = "#9C7C3C";
@@ -97,6 +101,8 @@ export function CanevasEditeur({
   planteSelectionnee,
   courbes,
   altRefPosition,
+  pointsDeVue,
+  onSelectPdv,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
@@ -890,6 +896,48 @@ export function CanevasEditeur({
             <Line points={[-5 / zoom, -8 / zoom, 0, -15 / zoom, 5 / zoom, -8 / zoom]} fill={VERT} closed />
             <Text x={-4 / zoom} y={-30 / zoom} text="N" fontSize={12 / zoom} fill={VERT} fontStyle="bold" />
           </Group>
+
+          {/* Caméras des points de vue */}
+          {pointsDeVue?.map((pdv, idx) => {
+            if (pdv.camera.x === 0 && pdv.camera.y === 0) return null;
+            const ec = terrainVersEcran({ x: pdv.camera.x, y: pdv.camera.y });
+            const capRad = -pdv.camera.cap * Math.PI / 180; // Convention plan : Y nord
+            const fovRad = (pdv.camera.fov_v ?? 50) * Math.PI / 180;
+            const coneLen = 12 / zoom;
+            const couleur = pdv.statut === "cale" ? "#16A34A" : "#D97706";
+            const nom = pdv.nom || `Vue ${idx + 1}`;
+            // Pointe du cône de vision
+            const dirX = Math.sin(-capRad);
+            const dirY = -Math.cos(-capRad);
+            const leftX = ec.x + Math.sin(-capRad - fovRad / 2) * coneLen;
+            const leftY = ec.y - Math.cos(-capRad - fovRad / 2) * coneLen;
+            const rightX = ec.x + Math.sin(-capRad + fovRad / 2) * coneLen;
+            const rightY = ec.y - Math.cos(-capRad + fovRad / 2) * coneLen;
+            return (
+              <Group key={pdv.id} onClick={() => onSelectPdv?.(pdv.id)} listening={!!onSelectPdv}>
+                {/* Cône de vision */}
+                <Line
+                  points={[ec.x, ec.y, leftX, leftY, rightX, rightY]}
+                  closed
+                  fill={couleur + "20"}
+                  stroke={couleur}
+                  strokeWidth={1}
+                  strokeScaleEnabled={false}
+                />
+                {/* Point caméra */}
+                <Circle x={ec.x} y={ec.y} radius={4 / zoom} fill={couleur} stroke="white" strokeWidth={1.5} strokeScaleEnabled={false} />
+                {/* Nom */}
+                <Text
+                  x={ec.x + 6 / zoom}
+                  y={ec.y - 5 / zoom}
+                  text={nom}
+                  fontSize={10 / zoom}
+                  fill={couleur}
+                  fontStyle="bold"
+                />
+              </Group>
+            );
+          })}
         </Layer>
       </Stage>
     </div>

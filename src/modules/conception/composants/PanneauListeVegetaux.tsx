@@ -2,10 +2,14 @@
 
 import type { Element } from "../types";
 import type { Action } from "../editeur/reducer";
+import type { Conflit } from "../vegetaux/ecartement";
+import { SectionConflits } from "./PanneauConflits";
 
 interface Props {
   elements: Map<string, Element>;
   dispatch: React.Dispatch<Action>;
+  conflits?: Conflit[];
+  onCadrerConflit?: (ids: [string, string]) => void;
 }
 
 interface LigneVegetal {
@@ -46,7 +50,7 @@ export function compterVegetaux(elements: Map<string, Element>): LigneVegetal[] 
   return Array.from(map.values()).sort((a, b) => a.nom_commun.localeCompare(b.nom_commun));
 }
 
-export function PanneauListeVegetaux({ elements, dispatch }: Props) {
+export function PanneauListeVegetaux({ elements, dispatch, conflits, onCadrerConflit }: Props) {
   const lignes = compterVegetaux(elements);
   const total = lignes.reduce((s, l) => s + l.count, 0);
 
@@ -88,6 +92,11 @@ export function PanneauListeVegetaux({ elements, dispatch }: Props) {
           ))
         )}
       </div>
+
+      {/* Section conflits intégrée en bas du panneau */}
+      {conflits && onCadrerConflit && (
+        <SectionConflits conflits={conflits} onCadrer={onCadrerConflit} />
+      )}
     </div>
   );
 }

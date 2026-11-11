@@ -109,14 +109,24 @@ test.describe.serial("Vue 3D", () => {
     expect(response.ok(), `Ajout végétal échoué : ${await response.text()}`).toBeTruthy();
   });
 
-  test("la scène 3D à l'étape 5 contient 1 bâtiment et 1 végétal de 1,20 m", async ({ page }) => {
+  test("la scène 3D en aperçu contient 1 bâtiment et 1 végétal de 1,20 m", async ({ page }) => {
     expect(projetId).toBeTruthy();
 
-    // /3d redirige vers ?etape=5
-    await page.goto(`/conception/${projetId}/3d`);
-    await page.waitForURL(`**/conception/${projetId}?etape=5`, { timeout: 10000 });
+    // L'aperçu 3D est accessible depuis l'étape 4 via le bouton Aperçu 3D
+    await page.goto(`/conception/${projetId}`);
+    await page.waitForTimeout(5000);
 
-    // Attendre que le canvas 3D soit visible
+    // Passer à l'étape 4
+    await page.locator("[data-testid='etape-4']").click();
+    await page.waitForTimeout(2000);
+
+    // Ouvrir l'aperçu 3D
+    const btnApercu = page.locator("[data-testid='btn-apercu-3d']");
+    await expect(btnApercu).toBeVisible({ timeout: 5000 });
+    await btnApercu.click();
+    await page.waitForTimeout(3000);
+
+    // Attendre que le canvas 3D soit visible dans l'overlay
     const conteneur = page.locator("[data-testid='conteneur-3d']");
     await expect(conteneur).toBeVisible({ timeout: 15000 });
     const canvas = conteneur.locator("canvas");
@@ -143,10 +153,6 @@ test.describe.serial("Vue 3D", () => {
     expect(data.vegetaux[0].hauteur_m).toBe(PLANTE_HAUTEUR);
     expect(data.vegetaux[0].position[0]).toBe(PLANTE_POSITION[0]);
     expect(data.vegetaux[0].position[1]).toBe(PLANTE_POSITION[1]);
-
-    // Le bouton vue piéton doit être visible
-    const vuePieton = page.locator("[data-testid='btn-vue-pieton']");
-    await expect(vuePieton).toBeVisible({ timeout: 5000 });
   });
 
   test("teardown : supprimer le projet E2E", async ({ page }) => {

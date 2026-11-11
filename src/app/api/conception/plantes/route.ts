@@ -1,28 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
 
+interface LignePlante {
+  image_face_path: string | null;
+  image_dessus_path: string | null;
+  [colonne: string]: unknown;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { supabase } = await exigerAdmin("api");
     const categorie = request.nextUrl.searchParams.get("categorie");
     const recherche = request.nextUrl.searchParams.get("q");
 
-    let query = supabase
-      .from("plantes")
-      .select("id, nom_commun, nom_latin, categorie, forme, hauteur_adulte_m, largeur_adulte_m, image_face_path, image_dessus_path, statut, est_reference, cout_generation_total, updated_at")
-      .order("nom_commun");
-
     const statut = request.nextUrl.searchParams.get("statut");
-    if (statut) query = query.eq("statut", statut);
-    if (categorie) query = query.eq("categorie", categorie);
-    if (recherche) query = query.or(`nom_commun.ilike.%${recherche}%,nom_latin.ilike.%${recherche}%`);
+    const lister = (colonnes: string) => {
+      let query = supabase.from("plantes").select(colonnes).order("nom_commun");
+      if (statut) query = query.eq("statut", statut);
+      if (categorie) query = query.eq("categorie", categorie);
+      if (recherche) query = query.or(`nom_commun.ilike.%${recherche}%,nom_latin.ilike.%${recherche}%`);
+      return query;
+    };
 
-    const { data, error } = await query;
+    const COLONNES = "id, nom_commun, nom_latin, categorie, forme, hauteur_adulte_m, largeur_adulte_m, image_face_path, image_dessus_path, statut, est_reference, cout_generation_total, updated_at";
+    let { data, error } = await lister(`${COLONNES}, largeur_3ans_m`);
+    // Migration 00019 non appliquée : la colonne largeur_3ans_m n'existe pas encore.
+    // On liste sans elle ; l'écartement retombe sur 70 % de la largeur adulte.
+    if (error?.code === "42703") {
+      console.warn("[plantes] colonne largeur_3ans_m absente : appliquer la migration 00019");
+      ({ data, error } = await lister(COLONNES));
+    }
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
     // Signed URLs pour les images
     const plantes = await Promise.all(
-      (data ?? []).map(async (p) => {
+      ((data ?? []) as unknown as LignePlante[]).map(async (p) => {
         let faceUrl = null;
         let dessusUrl = null;
         if (p.image_face_path) {
