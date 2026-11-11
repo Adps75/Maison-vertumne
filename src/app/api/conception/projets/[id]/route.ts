@@ -48,6 +48,43 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { supabase } = await exigerAdmin("api");
+    const { id } = await params;
+    let body: Record<string, unknown> = {};
+    try { body = await request.json(); } catch { /* body vide */ }
+
+    const updates: Record<string, unknown> = {};
+    if (typeof body.tolerance_chevauchement === "number") {
+      updates.tolerance_chevauchement = Math.max(0, Math.min(0.4, body.tolerance_chevauchement));
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json({ ok: false, error: "Rien à mettre à jour." }, { status: 400 });
+    }
+
+    const { error } = await supabase
+      .from("conception_projets")
+      .update(updates)
+      .eq("id", id);
+
+    if (error) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    if (e instanceof ErreurNonAutorise) {
+      return NextResponse.json({ ok: false, error: e.message }, { status: e.status });
+    }
+    throw e;
+  }
+}
+
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },

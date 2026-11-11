@@ -3,7 +3,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import type { PointDeVue, SoleilParams } from "../camera/types";
+import type { Element } from "../types";
 import type { DonneesScene3D } from "../scene3d/types";
+import type { Action } from "../editeur/reducer";
+import { useInteractionVegetaux3D } from "../scene3d/interaction-vegetaux";
+import { PanneauVegetaux3D } from "./PanneauVegetaux3D";
+import { PanneauProprietes3D } from "./PanneauProprietes3D";
 
 const SceneVisuelDynamic = dynamic(
   () => import("../scene3d/composants/SceneVisuel").then((m) => m.SceneVisuel),
@@ -17,12 +22,58 @@ interface Props {
   onSaveSoleil: (soleil: SoleilParams) => void | Promise<void>;
   onClose: () => void;
   onCalage: () => void;
+  dispatch: React.Dispatch<Action>;
+  elements: Map<string, Element>;
+  selection: Set<string>;
+  tolerance: number;
+  zoneContour?: [number, number][] | null;
 }
 
-export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage }: Props) {
+export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour }: Props) {
   const [soleil, setSoleil] = useState<SoleilParams>({ ...pdv.soleil });
   const [statutSoleil, setStatutSoleil] = useState<"idle" | "saving" | "saved">("idle");
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+
+  // Interaction végétaux 3D
+  const {
+    mode: modeVeg, planteAPoser, messageErreur,
+    previewPositionRef, dragPositionRef, isDraggingRef, dragElementIdRef,
+    downScreenRef, raycastCallbacks, onDragMove, activerPlacement, annulerPlacement,
+  } = useInteractionVegetaux3D({ dispatch, elements, selection, altitudeEn, tolerance, zoneContour });
+
+  // Élément sélectionné (pour panneau propriétés)
+  const selectedElement = selection.size === 1
+    ? elements.get(Array.from(selection)[0])
+    : undefined;
+  const selectedVegetal = selectedElement?.type === "vegetal" ? selectedElement : undefined;
+
+  // Clavier : Échap, Suppr, Cmd+Z
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (modeVeg === "placement") { annulerPlacement(); return; }
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selection.size > 0) {
+          e.preventDefault();
+          dispatch({ type: "SUPPRIMER_SELECTION" });
+          return;
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        dispatch({ type: "ANNULER" });
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        dispatch({ type: "RETABLIR" });
+        return;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [modeVeg, selection, dispatch, annulerPlacement]);
   const photoRef = useRef<HTMLImageElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const [photoRect, setPhotoRect] = useState<{ w: number; h: number; x: number; y: number } | null>(null);
@@ -110,7 +161,7 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
           className="bg-stone-700 hover:bg-stone-600 px-3 py-1 rounded text-[0.75rem]"
           data-testid="btn-mode-calage-from-visuel"
         >
-          Calage
+          Recaler
         </button>
         <button
           className="bg-stone-700 px-3 py-1 rounded text-[0.75rem] border border-stone-500"
@@ -131,12 +182,12 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
       <div className="flex-1 flex min-h-0">
         {/* Photo + scène superposée */}
         <div ref={parentRef} className="flex-1 relative bg-black overflow-hidden">
-          {/* Photo pleine opacité */}
+          {/* Photo pleine opacité — pointer-events: none pour laisser passer les clics au Canvas 3D */}
           <img
             ref={photoRef}
             src={`/api/conception/projets/${pdv.projet_id}/points-de-vue/${pdv.id}/image`}
             alt={pdv.nom}
-            className="absolute max-w-full max-h-full object-contain"
+            className="absolute max-w-full max-h-full object-contain pointer-events-none"
             style={{
               top: "50%",
               left: "50%",
@@ -166,14 +217,53 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
                 soleil={soleil}
                 altitudeEn={altitudeEn}
                 photoAspect={pdv.largeur_px / pdv.hauteur_px}
+                raycastCallbacks={raycastCallbacks}
+                onDragMove={onDragMove}
+                downScreenRef={downScreenRef}
+                selection={selection}
+                planteAPoser={planteAPoser}
+                previewPositionRef={previewPositionRef}
+                dragPositionRef={dragPositionRef}
+                dragElementIdRef={dragElementIdRef}
               />
             </div>
           )}
         </div>
 
+        {/* Panneau végétaux 3D */}
+        <PanneauVegetaux3D
+          onSelectPlante={activerPlacement}
+          planteActive={planteAPoser}
+        />
+
+        {/* Panneau propriétés plante sélectionnée */}
+        {selectedVegetal && (
+          <PanneauProprietes3D
+            element={selectedVegetal}
+            onModifier={(el) => dispatch({ type: "MODIFIER_ELEMENTS", elements: [el] })}
+            onRemplacer={() => {
+              // Ouvre le panneau végétaux (il est déjà visible)
+            }}
+          />
+        )}
+
+        {/* Message d'erreur */}
+        {messageErreur && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 bg-paper text-red-700 border border-red-300 px-4 py-2 rounded shadow-sm text-sm">
+            {messageErreur}
+          </div>
+        )}
+
+        {/* Indicateur mode placement */}
+        {modeVeg === "placement" && planteAPoser && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 bg-paper text-ink border border-hair-light px-4 py-2 rounded shadow-sm text-[0.75rem]">
+            Cliquez sur le sol pour poser {planteAPoser.nom_commun} — Échap pour annuler
+          </div>
+        )}
+
         {/* Panneau soleil */}
-        <div className="w-48 bg-stone-800 text-stone-200 p-3 overflow-y-auto shrink-0 text-[0.75rem]">
-          <h4 className="font-medium mb-3 text-stone-300">Soleil</h4>
+        <div className="w-48 bg-paper border-l border-hair-light text-ink p-3 overflow-y-auto shrink-0 text-[0.75rem] shadow-md">
+          <h4 className="font-medium mb-3 text-stone">Soleil</h4>
           <Curseur
             label="Azimut" value={soleil.azimut} unite="°"
             onChange={(v) => setSoleil((s) => ({ ...s, azimut: v }))}

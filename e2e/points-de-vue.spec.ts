@@ -176,7 +176,7 @@ test.describe.serial("Points de vue — assistant calage", () => {
     await page.waitForTimeout(500);
   });
 
-  test("cap ≠ 0 après le calage", async ({ page }) => {
+  test("vue calée s'ouvre en Visuel, cap ≠ 0", async ({ page }) => {
     await page.goto(`/conception/${projetId}`);
     await page.waitForTimeout(4000);
 
@@ -188,7 +188,14 @@ test.describe.serial("Points de vue — assistant calage", () => {
     await pdvBtn.click();
     await page.waitForTimeout(2000);
 
-    // Le PDV a été calé, donc on doit être à l'étape 3 (pas 1)
+    // Le PDV est calé → doit s'ouvrir directement en Visuel
+    await expect(page.locator("[data-testid='vue-visuel']")).toBeVisible({ timeout: 5000 });
+
+    // Recaler pour vérifier le cap
+    await page.locator("[data-testid='btn-mode-calage-from-visuel']").click();
+    await page.waitForTimeout(2000);
+
+    // Doit être à l'étape 3 du calage (pas étape 1)
     await expect(page.locator("[data-testid='calage-etape']")).toContainText("Étape 3 sur 4", { timeout: 5000 });
 
     // Ouvrir les réglages pour vérifier le cap

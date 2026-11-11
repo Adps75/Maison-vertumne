@@ -13,6 +13,7 @@ import type { GrilleRelief, PointCote, CourbeDeNiveau } from "@/modules/concepti
 import { altitudeIGN } from "@/modules/conception/terrain/grille";
 import type { PointDeVue, CameraParams, SoleilParams } from "@/modules/conception/camera/types";
 import { normaliserCap, vfovFromFocal35mm } from "@/modules/conception/camera/fov";
+import { positionValideLaPlusProche, extraireVoisines, detecterConflits, rayonEcartement, type Conflit } from "@/modules/conception/vegetaux/ecartement";
 import { PanneauPointsDeVue } from "@/modules/conception/composants/PanneauPointsDeVue";
 import { VueCalage } from "@/modules/conception/composants/VueCalage";
 import { VueVisuel } from "@/modules/conception/composants/VueVisuel";
@@ -46,6 +47,7 @@ import type { Pt } from "@/modules/conception/geo/plan";
 import { hitTestGeometrique, elementSurvole, selectionParRectangle } from "@/modules/conception/editeur/selection";
 import { PanneauVegetaux } from "@/modules/conception/composants/PanneauVegetaux";
 import { PanneauListeVegetaux } from "@/modules/conception/composants/PanneauListeVegetaux";
+// PanneauConflits est intégré dans PanneauListeVegetaux
 import { calculerNouveauDiametre } from "@/modules/conception/editeur/poignees";
 import {
   appliquerDeplacementPoignee,
@@ -119,6 +121,7 @@ export function PageProjetClient() {
     position?: [number, number];
   } | null>(null);
   const [reliefMessage, setReliefMessage] = useState<string | null>(null);
+  const [tolerance, setTolerance] = useState(0.30);
 
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
@@ -196,6 +199,9 @@ export function PageProjetClient() {
           setProjet(projetData.projet);
           setUpdatedAt(projetData.projet.updated_at);
           setAltRefNgf(projetData.projet.altitude_reference_ngf ?? null);
+          if (typeof projetData.projet.tolerance_chevauchement === "number") {
+            setTolerance(projetData.projet.tolerance_chevauchement);
+          }
           // Charger la grille de relief si disponible
           if (projetData.projet.relief_url) {
             fetch(projetData.projet.relief_url)
@@ -743,10 +749,20 @@ export function PageProjetClient() {
         case "planter": {
           if (!etat.planteSelectionnee) break;
           const ps = etat.planteSelectionnee;
+          // Écartement : calculer la position valide (sauf si Maj enfoncé)
+          const positionPlante = shiftKeyRef.current
+            ? pt
+            : positionValideLaPlusProche(
+                { id: "", position: [pt[0], pt[1]], rayon: rayonEcartement({ largeur_3ans_m: ps.largeur_3ans_m, diametre_m: ps.diametre_m }), categorie: ps.categorie, forme: ps.forme },
+                [pt[0], pt[1]],
+                extraireVoisines(etat.elements),
+                tolerance,
+                zoneContourActive,
+              );
           const element: Element = {
             id: genererIdLocal(),
             type: "vegetal",
-            geometrie: { type: "point", position: pt },
+            geometrie: { type: "point", position: positionPlante },
             calque: "vegetal",
             statut: "nouveau",
             hauteur: ps.hauteur_m,
@@ -755,14 +771,16 @@ export function PageProjetClient() {
               nom_commun: ps.nom_commun,
               nom_latin: ps.nom_latin,
               diametre_m: ps.diametre_m,
+              largeur_3ans_m: ps.largeur_3ans_m,
               hauteur_m: ps.hauteur_m,
               version: ps.version,
+              categorie: ps.categorie,
+              forme: ps.forme,
               rotation: 0,
             },
             ordre: etat.elements.size,
           };
           dispatch({ type: "CREER_ELEMENT", element });
-          // L'outil reste actif pour poser d'autres plantes
           break;
         }
 
@@ -1295,6 +1313,19 @@ export function PageProjetClient() {
   const aVegetaux = Array.from(etat.elements.values()).some((el) => el.type === "vegetal");
 
   // Modèle de terrain (grille IGN + points cotés)
+  // Contour de la zone active (pour contraindre les végétaux)
+  const zoneContourActive: [number, number][] | null = useMemo(() => {
+    if (!etat.zoneActive) return null;
+    const zone = etat.elements.get(etat.zoneActive);
+    if (!zone || !("points" in zone.geometrie)) return null;
+    return zone.geometrie.points.map(([x, y]) => [x, y] as [number, number]);
+  }, [etat.zoneActive, etat.elements]);
+
+  // Conflits végétaux
+  const conflitsVegetaux: Conflit[] = useMemo(() => {
+    return detecterConflits(extraireVoisines(etat.elements), tolerance);
+  }, [etat.elements, tolerance]);
+
   const pointsCotes: PointCote[] = useMemo(() => {
     const pcs: PointCote[] = [];
     for (const el of etat.elements.values()) {
@@ -1569,6 +1600,16 @@ export function PageProjetClient() {
             zoneActive={etat.zoneActive}
             planteSelectionnee={etat.planteSelectionnee}
             courbes={courbes}
+            pointsDeVue={pointsDeVue.map((p, i) => ({
+              id: p.id,
+              nom: p.nom || `Vue ${i + 1}`,
+              camera: p.camera,
+              statut: p.statut,
+            }))}
+            onSelectPdv={(pdvId) => {
+              const pdv = pointsDeVue.find((p) => p.id === pdvId);
+              if (pdv) { setPdvActif(pdv); setModeVue(pdv.statut === "cale" ? "visuel" : "calage"); }
+            }}
           />
 
         {/* Panneaux de l'éditeur 2D (masqués à l'étape 5) */}
@@ -1612,6 +1653,16 @@ export function PageProjetClient() {
                 <PanneauListeVegetaux
                   elements={etat.elements}
                   dispatch={dispatch}
+                  conflits={conflitsVegetaux}
+                  onCadrerConflit={(ids) => {
+                    dispatch({ type: "SELECTIONNER", ids });
+                    const pts: Pt[] = [];
+                    for (const id of ids) {
+                      const el = etat.elements.get(id);
+                      if (el && el.geometrie.type === "point") pts.push(el.geometrie.position);
+                    }
+                    if (pts.length > 0) cadrerSurZone(pts);
+                  }}
                 />
               </>
             )}
@@ -1706,7 +1757,7 @@ export function PageProjetClient() {
               projetId={id}
               zoneActive={etat.zoneActive}
               pointsDeVue={pointsDeVue}
-              onSelect={(pdv) => { setPdvActif(pdv); setModeVue("calage"); }}
+              onSelect={(pdv) => { setPdvActif(pdv); setModeVue(pdv.statut === "cale" ? "visuel" : "calage"); }}
               onPlacer={(pdv) => {
                 setPlacementPdv({ pdvId: pdv.id, phase: "position" });
                 dispatch({ type: "CHANGER_OUTIL", outil: "selection", message: "Cliquez pour positionner la caméra" });
@@ -1716,6 +1767,14 @@ export function PageProjetClient() {
                   .then((r) => r.json())
                   .then((d) => { if (d.ok) setPointsDeVue(d.points_de_vue); })
                   .catch(() => {});
+              }}
+              onRename={async (pdvId, nom) => {
+                await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ nom }),
+                });
+                setPointsDeVue((prev) => prev.map((p) => p.id === pdvId ? { ...p, nom } : p));
               }}
               onFocaleChange={async (pdvId, focale35mm) => {
                 const pdv = pointsDeVue.find((p) => p.id === pdvId);
@@ -1832,6 +1891,11 @@ export function PageProjetClient() {
           }}
           onClose={() => { setModeVue(null); setPdvActif(null); }}
           onCalage={() => setModeVue("calage")}
+          dispatch={dispatch}
+          elements={etat.elements}
+          selection={etat.selection}
+          tolerance={tolerance}
+          zoneContour={zoneContourActive}
         />
       )}
     </div>

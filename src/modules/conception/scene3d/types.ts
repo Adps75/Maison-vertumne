@@ -61,3 +61,6 @@ export interface Vegetal3D {
   /** Altitude relative au point de la plante (pour positionnement 3D). */
   altitudeRelative: number;
 }
+
+/** Callbacks d'interaction 3D — utilisés par TerrainRaycastHandler. */
+export type { RaycastCallbacks } from "./interaction-vegetaux";

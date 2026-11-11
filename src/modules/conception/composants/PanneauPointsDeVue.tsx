@@ -19,19 +19,24 @@ interface Props {
   onPlacer: (pdv: PointDeVue) => void;
   onImported: () => void;
   onFocaleChange: (pdvId: string, focale35mm: number) => void;
+  onRename: (pdvId: string, nom: string) => void;
 }
 
-export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect, onPlacer, onImported, onFocaleChange }: Props) {
+export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect, onPlacer, onImported, onFocaleChange, onRename }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [chargement, setChargement] = useState(false);
   const [focaleOuverte, setFocaleOuverte] = useState<string | null>(null);
   const [focaleSaisie, setFocaleSaisie] = useState("");
+  const [renommeId, setRenommeId] = useState<string | null>(null);
+  const [renommeTexte, setRenommeTexte] = useState("");
 
   const importer = async (files: FileList) => {
     setChargement(true);
     try {
-      for (const file of Array.from(files)) {
-        await importerPhoto(file, projetId, zoneActive);
+      const filesArr = Array.from(files);
+      for (let i = 0; i < filesArr.length; i++) {
+        const nom = `Vue ${pointsDeVue.length + i + 1}`;
+        await importerPhoto(filesArr[i], projetId, zoneActive, nom);
       }
       onImported();
     } catch (e) {
@@ -71,31 +76,59 @@ export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect
             Importez une photo pour commencer.
           </p>
         )}
-        {pointsDeVue.map((pdv) => (
+        {pointsDeVue.map((pdv, idx) => (
           <div key={pdv.id} className="mb-1">
             <div className="flex items-center gap-1">
               <button
                 onClick={() => onSelect(pdv)}
-                className="flex-1 text-left px-2 py-1.5 hover:bg-paper-2 rounded text-[0.75rem] flex items-center gap-2"
+                className="flex-1 text-left px-2 py-1.5 hover:bg-paper-2 rounded text-[0.75rem] flex items-center gap-2 min-w-0"
                 data-testid={`pdv-${pdv.id}`}
               >
                 <span
                   className={`w-2 h-2 rounded-full shrink-0 ${
                     pdv.statut === "cale" ? "bg-green-500" : "bg-amber-400"
                   }`}
+                  title={pdv.statut === "cale" ? "Calée" : "À caler"}
                 />
-                <span className="truncate">{pdv.nom}</span>
+                <span className="flex-1 min-w-0">
+                  {renommeId === pdv.id ? (
+                    <input
+                      type="text"
+                      value={renommeTexte}
+                      onChange={(e) => setRenommeTexte(e.target.value)}
+                      onBlur={() => { onRename(pdv.id, renommeTexte); setRenommeId(null); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { onRename(pdv.id, renommeTexte); setRenommeId(null); }
+                        if (e.key === "Escape") setRenommeId(null);
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full bg-white border border-hair-light rounded px-1 py-0 text-[0.75rem]"
+                      autoFocus
+                      data-testid={`pdv-rename-input-${pdv.id}`}
+                    />
+                  ) : (
+                    <span className="truncate block" data-testid={`pdv-nom-${pdv.id}`}>
+                      {pdv.nom || `Vue ${idx + 1}`}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[0.6rem] text-stone shrink-0">
+                  {pdv.statut === "cale" ? "Calée" : "À caler"}
+                </span>
               </button>
-              {pdv.camera.x === 0 && pdv.camera.y === 0 && (
-                <button
-                  onClick={() => onPlacer(pdv)}
-                  className="text-[0.65rem] text-brass hover:text-brass-soft px-1"
-                  title="Placer la caméra sur le plan"
-                  data-testid={`pdv-placer-${pdv.id}`}
-                >
-                  📍
-                </button>
-              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRenommeId(pdv.id);
+                  setRenommeTexte(pdv.nom || `Vue ${idx + 1}`);
+                }}
+                className="text-[0.65rem] text-stone hover:text-brass px-0.5 shrink-0"
+                title="Renommer"
+                data-testid={`pdv-rename-${pdv.id}`}
+              >
+                ✎
+              </button>
             </div>
             {/* Indicateur focale estimée + sélecteur d'objectif */}
             {!pdv.exif.focale_35mm && (
@@ -170,7 +203,7 @@ export function PanneauPointsDeVue({ projetId, zoneActive, pointsDeVue, onSelect
 
 // ─── Import photo ───────────────────────────────────────────────────────────
 
-async function importerPhoto(file: File, projetId: string, zoneId: string | null) {
+async function importerPhoto(file: File, projetId: string, zoneId: string | null, nom: string) {
   // 1. Lire l'EXIF AVANT tout réencodage
   const exifr = await import("exifr");
   let exifData: ExifData = {
@@ -221,7 +254,7 @@ async function importerPhoto(file: File, projetId: string, zoneId: string | null
   // 4. Envoyer au serveur
   const formData = new FormData();
   formData.append("photo", blob, "photo.jpg");
-  formData.append("nom", file.name.replace(/\.[^.]+$/, ""));
+  formData.append("nom", nom);
   if (zoneId) formData.append("zone_id", zoneId);
   formData.append("largeur_px", String(width));
   formData.append("hauteur_px", String(height));

@@ -6,11 +6,15 @@ import * as THREE from "three";
 import type { DonneesScene3D } from "../types";
 import type { Batiment3D } from "../types";
 import type { CameraParams, SoleilParams } from "../../camera/types";
+import type { PlanteSelectionnee } from "../../types";
 import type { Pt } from "../../geo/plan";
 import { planVers3D } from "../conversion";
+import type { RaycastCallbacks } from "../interaction-vegetaux";
+import { GestionnairePointeurTerrain } from "./GestionnairePointeurTerrain";
 import { cameraParamsVersThree, soleilVersPosition } from "../../camera/projection";
 import { Nettoyeur } from "./Nettoyeur";
 import { Vegetaux } from "./Vegetal";
+import { PreviewVegetal } from "./PreviewVegetal";
 
 // ---------------------------------------------------------------------------
 // SceneVisuel : scène 3D pour superposition végétaux sur photo.
@@ -20,6 +24,12 @@ import { Vegetaux } from "./Vegetal";
 /** Données exposées sur window.__visuelTest en développement/test uniquement. */
 export interface VisuelTestData {
   vegetaux_rendus: number;
+  /** Végétaux rendus : position plan et altitude relative du pied. */
+  vegetaux: { id: string; position: [number, number]; altitudeRelative: number; hauteur_m: number }[];
+  /** Nombre de billboards de végétaux effectivement affichés (textures chargées). */
+  vegetauxAffiches: () => number;
+  /** Projette un point plan (x, y, hauteur) en coordonnées écran (clientX, clientY). */
+  versEcran: (x: number, y: number, h: number) => [number, number] | null;
 }
 
 interface SceneVisuelProps {
@@ -28,9 +38,22 @@ interface SceneVisuelProps {
   soleil: SoleilParams;
   altitudeEn: (x: number, y: number) => number;
   photoAspect?: number;
+  /** Callbacks d'interaction (optionnel, mode édition). */
+  raycastCallbacks?: RaycastCallbacks;
+  onDragMove?: (screenX: number, screenY: number, terrainX: number, terrainY: number) => void;
+  downScreenRef?: React.RefObject<[number, number] | null>;
+  selection?: Set<string>;
+  planteAPoser?: PlanteSelectionnee | null;
+  previewPositionRef?: React.RefObject<[number, number] | null>;
+  dragPositionRef?: React.RefObject<[number, number] | null>;
+  dragElementIdRef?: React.RefObject<string | null>;
 }
 
-export function SceneVisuel({ donnees, camera, soleil, altitudeEn, photoAspect }: SceneVisuelProps) {
+export function SceneVisuel({
+  donnees, camera, soleil, altitudeEn, photoAspect,
+  raycastCallbacks, onDragMove, downScreenRef,
+  selection, planteAPoser, previewPositionRef, dragPositionRef, dragElementIdRef,
+}: SceneVisuelProps) {
   return (
     <Canvas
       shadows
@@ -42,11 +65,35 @@ export function SceneVisuel({ donnees, camera, soleil, altitudeEn, photoAspect }
       <CameraController params={camera} altitudeEn={altitudeEn} photoAspect={photoAspect} />
       <EclairageVisuel emprise={donnees.emprise} soleil={soleil} />
       <Suspense fallback={null}>
-        <Vegetaux vegetaux={donnees.vegetaux} />
+        <Vegetaux
+          vegetaux={donnees.vegetaux}
+          selection={selection}
+          dragPositionRef={dragPositionRef}
+          dragElementIdRef={dragElementIdRef}
+          altitudeEn={altitudeEn}
+        />
+        {planteAPoser && previewPositionRef && (
+          <PreviewVegetal
+            planteId={planteAPoser.id}
+            version={planteAPoser.version}
+            hauteur_m={planteAPoser.hauteur_m}
+            positionRef={previewPositionRef}
+            altitudeEn={altitudeEn}
+          />
+        )}
       </Suspense>
       <BatimentsOccludeurs batiments={donnees.batiments} altitudeEn={altitudeEn} />
       <TerrainOccludeur emprise={donnees.emprise} altitudeEn={altitudeEn} />
-      <DonneesTest vegetauxCount={donnees.vegetaux.length} />
+      {raycastCallbacks && (
+        <GestionnairePointeurTerrain
+          emprise={donnees.emprise}
+          altitudeEn={altitudeEn}
+          callbacks={raycastCallbacks}
+          onDragMove={onDragMove}
+          downScreenRef={downScreenRef}
+        />
+      )}
+      <DonneesTest vegetaux={donnees.vegetaux} />
     </Canvas>
   );
 }
@@ -314,19 +361,38 @@ function TerrainOccludeur({
 // DonneesTest : expose les données de test en développement.
 // ---------------------------------------------------------------------------
 
-function DonneesTest({ vegetauxCount }: { vegetauxCount: number }) {
+function DonneesTest({ vegetaux }: { vegetaux: DonneesScene3D["vegetaux"] }) {
+  const { camera, gl, scene } = useThree();
+
   useEffect(() => {
     if (process.env.NODE_ENV === "production") return;
 
     const testData: VisuelTestData = {
-      vegetaux_rendus: vegetauxCount,
+      vegetaux_rendus: vegetaux.length,
+      vegetaux: vegetaux.map((v) => ({
+        id: v.id,
+        position: [v.position[0], v.position[1]],
+        altitudeRelative: v.altitudeRelative,
+        hauteur_m: v.hauteur_m,
+      })),
+      vegetauxAffiches: () => {
+        let n = 0;
+        scene.traverse((o) => { if (typeof o.userData?.vegetalId === "string") n++; });
+        return n;
+      },
+      versEcran: (x, y, h) => {
+        const p = new THREE.Vector3(...planVers3D(x, y, h)).project(camera);
+        if (!(p.z > -1 && p.z < 1)) return null;
+        const r = gl.domElement.getBoundingClientRect();
+        return [r.left + ((p.x + 1) / 2) * r.width, r.top + ((1 - p.y) / 2) * r.height];
+      },
     };
     (window as unknown as Record<string, unknown>).__visuelTest = testData;
 
     return () => {
       delete (window as unknown as Record<string, unknown>).__visuelTest;
     };
-  }, [vegetauxCount]);
+  }, [vegetaux, camera, gl, scene]);
 
   return null;
 }
