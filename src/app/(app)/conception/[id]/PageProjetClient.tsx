@@ -14,6 +14,7 @@ import { altitudeIGN } from "@/modules/conception/terrain/grille";
 import type { PointDeVue, CameraParams, SoleilParams } from "@/modules/conception/camera/types";
 import { normaliserCap, vfovFromFocal35mm } from "@/modules/conception/camera/fov";
 import { useReglagesTraits } from "@/modules/conception/composants/TraitsConstructionControle";
+import { useCompositionIA } from "@/modules/conception/composants/CompositionIA";
 import { positionValideLaPlusProche, extraireVoisines, detecterConflits, rayonEcartement, type Conflit } from "@/modules/conception/vegetaux/ecartement";
 import { PanneauPointsDeVue } from "@/modules/conception/composants/PanneauPointsDeVue";
 import { VueCalage } from "@/modules/conception/composants/VueCalage";
@@ -1357,6 +1358,19 @@ export function PageProjetClient() {
     [grilleRelief, pointsCotes, altRefNgf],
   );
 
+  // Composition automatique d'un massif par l'IA (étape 4 et Visuel)
+  const compositionIA = useCompositionIA({
+    projetId: id,
+    etape: etat.etape,
+    elements: etat.elements,
+    zoneActive: etat.zoneActive,
+    dispatch,
+    batiments: projet?.batiments_geojson ?? [],
+    vues: pointsDeVue.map((v, i) => ({ nom: v.nom || `Vue ${i + 1}`, camera: v.camera, statut: v.statut })),
+    altitudeEn: grilleRelief || pointsCotes.length > 0 ? altitudeEn : null,
+    tolerance,
+  });
+
   // Courbes de niveau
   const courbes: CourbeDeNiveau[] = useMemo(() => {
     if (!courbesVisibles || !projet) return [];
@@ -1701,6 +1715,15 @@ export function PageProjetClient() {
                 >
                   Courbes de niveau
                 </button>
+                {etat.etape === 4 && (
+                  <button
+                    onClick={compositionIA.ouvrir}
+                    className="bg-brass hover:bg-brass-soft text-paper rounded px-3 py-1.5 text-[0.75rem] shadow transition-colors"
+                    data-testid="btn-composer-ia"
+                  >
+                    Composer avec l&apos;IA
+                  </button>
+                )}
                 {etat.etape === 3 && grilleRelief && (
                   <button
                     onClick={() => {
@@ -1906,6 +1929,7 @@ export function PageProjetClient() {
           onClose={() => { setModeVue(null); setPdvActif(null); }}
           onCalage={() => setModeVue("calage")}
           reglagesTraits={reglagesTraits}
+          onComposerIA={compositionIA.ouvrir}
           dispatch={dispatch}
           elements={etat.elements}
           selection={etat.selection}
@@ -1913,6 +1937,8 @@ export function PageProjetClient() {
           zoneContour={zoneContourActive}
         />
       )}
+
+      {compositionIA.rendu}
     </div>
   );
 }

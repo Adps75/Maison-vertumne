@@ -150,7 +150,7 @@ function determinerZonePoints(
 }
 
 /** Extrait les points d'un polygone, rectangle ou cercle en tableau de Pt. */
-function extrairePointsSurface(el: Element): Pt[] | null {
+export function extrairePointsSurface(el: Element): Pt[] | null {
   const g = el.geometrie;
   if (g.type === "polygone" || g.type === "rectangle") {
     return g.points.length >= 3 ? g.points : null;

@@ -43,6 +43,8 @@ export default defineConfig({
       ...(process.env.E2E_RELIEF_FIXTURE ? { E2E_RELIEF_FIXTURE: process.env.E2E_RELIEF_FIXTURE } : {}),
       // Fournisseur d'image simulé pour les tests du rendu IA (aucun appel réel)
       ...(process.env.FOURNISSEUR_IMAGE ? { FOURNISSEUR_IMAGE: process.env.FOURNISSEUR_IMAGE } : {}),
+      // IA de composition simulée pour les tests (aucun appel à l'API Anthropic)
+      ...(process.env.COMPOSITION_IA ? { COMPOSITION_IA: process.env.COMPOSITION_IA } : {}),
     },
   },
 });

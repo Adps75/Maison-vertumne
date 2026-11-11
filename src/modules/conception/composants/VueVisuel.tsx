@@ -37,9 +37,11 @@ interface Props {
   tolerance: number;
   zoneContour?: [number, number][] | null;
   reglagesTraits: ReglagesTraits;
+  /** Ouvre l'assistant de composition IA. */
+  onComposerIA?: () => void;
 }
 
-export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour, reglagesTraits }: Props) {
+export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour, reglagesTraits, onComposerIA }: Props) {
   const [soleil, setSoleil] = useState<SoleilParams>({ ...pdv.soleil });
   const [statutSoleil, setStatutSoleil] = useState<"idle" | "saving" | "saved">("idle");
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -150,6 +152,15 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
         <span className="font-medium">{pdv.nom}</span>
         <div className="flex-1" />
         <BoutonTraits reglages={reglagesTraits} />
+        {onComposerIA && (
+          <button
+            onClick={onComposerIA}
+            className="px-3 py-1 rounded text-[0.75rem] bg-paper text-ink border border-hair-light hover:bg-paper-2"
+            data-testid="btn-composer-ia-visuel"
+          >
+            Composer avec l&apos;IA
+          </button>
+        )}
         <button
           onClick={() => setRenduOuvert((v) => !v)}
           aria-pressed={renduOuvert}

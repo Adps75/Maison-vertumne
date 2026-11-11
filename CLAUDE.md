@@ -108,6 +108,8 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
 ## À faire
 - Remplacer le window.confirm de la commande REF (changement de référence 0,00)
   par la boîte de dialogue à la charte (branche isolation et navigation).
+- Données climatiques : intégrer les données ouvertes de Météo-France
+  (historiques et projections, licence ouverte), après vérification des conditions.
 
 ## Méthode de travail
 - Toujours proposer un plan avant de coder, et attendre ma validation.

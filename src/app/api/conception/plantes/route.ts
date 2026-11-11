@@ -23,11 +23,13 @@ export async function GET(request: NextRequest) {
     };
 
     const COLONNES = "id, nom_commun, nom_latin, categorie, forme, hauteur_adulte_m, largeur_adulte_m, image_face_path, image_dessus_path, statut, est_reference, cout_generation_total, updated_at";
-    let { data, error } = await lister(`${COLONNES}, largeur_3ans_m`);
-    // Migration 00019 non appliquée : la colonne largeur_3ans_m n'existe pas encore.
-    // On liste sans elle ; l'écartement retombe sur 70 % de la largeur adulte.
+    // Colonnes ajoutées par les migrations 00019 (largeur à 3 ans) et 00022 (fiche écologique)
+    const OPTIONNELLES = "largeur_3ans_m, exposition, besoin_eau, resistance_secheresse";
+    let { data, error } = await lister(`${COLONNES}, ${OPTIONNELLES}`);
+    // Migration non appliquée : une de ces colonnes n'existe pas encore. On liste sans elles ;
+    // l'écartement retombe sur 70 % de la largeur adulte.
     if (error?.code === "42703") {
-      console.warn("[plantes] colonne largeur_3ans_m absente : appliquer la migration 00019");
+      console.warn(`[plantes] colonne absente (${error.message}) : appliquer les migrations 00019 et 00022`);
       ({ data, error } = await lister(COLONNES));
     }
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -95,6 +97,11 @@ export async function POST(request: NextRequest) {
         periode_floraison: body.periode_floraison ?? null,
         notes: body.notes ?? null,
         floraison_visible: body.floraison_visible ?? false,
+        // Champs des migrations 00019 et 00022, envoyés seulement s'ils sont fournis
+        ...(body.largeur_3ans_m != null ? { largeur_3ans_m: body.largeur_3ans_m } : {}),
+        ...(body.exposition != null ? { exposition: body.exposition } : {}),
+        ...(body.besoin_eau != null ? { besoin_eau: body.besoin_eau } : {}),
+        ...(body.resistance_secheresse != null ? { resistance_secheresse: body.resistance_secheresse } : {}),
       })
       .select("id")
       .single();

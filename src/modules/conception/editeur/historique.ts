@@ -37,6 +37,11 @@ export class Historique {
     return this.actions[++this.position];
   }
 
+  /** Dernière action appliquée (celle qu'annulerait Cmd+Z), ou null. */
+  derniere(): ActionHistorique | null {
+    return this.position >= 0 ? this.actions[this.position] : null;
+  }
+
   taille(): number {
     return this.actions.length;
   }

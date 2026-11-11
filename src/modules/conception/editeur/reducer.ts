@@ -20,6 +20,8 @@ export type Action =
   | { type: "TERMINER_TRACE"; fermer?: boolean }
   | { type: "ANNULER_TRACE" }
   | { type: "CREER_ELEMENT"; element: Element }
+  /** Composition IA : ajoute des plantes et retire celles d'une composition remplacée, en UNE action annulable. */
+  | { type: "APPLIQUER_COMPOSITION"; ajouts: Element[]; suppressions: string[] }
   | { type: "MODIFIER_ELEMENTS"; elements: Element[] }
   | { type: "SUPPRIMER_SELECTION" }
   | { type: "SELECTIONNER"; ids: string[]; ajouter?: boolean }
@@ -84,6 +86,11 @@ function historiqueEtape(etape: NumeroEtape): Historique {
     historiques.set(etape, h);
   }
   return h;
+}
+
+/** Dernière action annulable de l'étape (pour vérifier qu'il s'agit bien d'une composition). */
+export function derniereActionHistorique(etape: NumeroEtape): ActionHistorique | null {
+  return historiqueEtape(etape).derniere();
 }
 
 /** Réinitialise tous les historiques (changement de projet). */
@@ -151,6 +158,26 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       return { ...etat, elements, traceEnCours: [] };
     }
 
+    case "APPLIQUER_COMPOSITION": {
+      const elements = new Map(etat.elements);
+      const avant: Element[] = [];
+      const suppressions: string[] = [];
+      for (const id of action.suppressions) {
+        const el = elements.get(id);
+        if (!el) continue;
+        avant.push(el);
+        suppressions.push(id);
+        elements.delete(id);
+        changements.suppressions.push(id);
+      }
+      for (const el of action.ajouts) {
+        elements.set(el.id, el);
+        changements.upserts.push(el);
+      }
+      historiqueEtape(etat.etape).push({ type: "composition", avant, apres: action.ajouts, suppressions });
+      return { ...etat, elements, selection: new Set() };
+    }
+
     case "MODIFIER_ELEMENTS": {
       const elements = new Map(etat.elements);
       const avant: Element[] = [];
@@ -215,9 +242,9 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
         changements.upserts.push(el);
       }
 
-      // Annuler les créations
+      // Annuler les créations (y compris les plantes d'une composition)
       for (const el of action_hist.apres) {
-        if (action_hist.type === "creer") {
+        if (action_hist.type === "creer" || action_hist.type === "composition") {
           elements.delete(el.id);
           changements.suppressions.push(el.id);
         }
