@@ -75,8 +75,15 @@ async function calerPhoto(page: Page) {
   await expect(page.locator("[data-testid='btn-traits']")).toHaveAttribute("aria-pressed", "true");
   await page.locator("[data-testid='btn-suivant']").click();
   await page.waitForTimeout(300);
+  // Attendre l'enregistrement effectif du statut « calée »
+  const enregistrement = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && /\/points-de-vue\/[^/]+$/.test(new URL(r.url()).pathname)
+      && (r.request().postData() ?? "").includes('"statut":"cale"'),
+    { timeout: 60_000 },
+  );
   await page.locator("[data-testid='btn-valider-calage']").click();
-  await page.waitForTimeout(3000);
+  expect((await enregistrement).ok()).toBeTruthy();
+  await page.waitForTimeout(1000);
   await page.locator("[data-testid='btn-retour-visuel']").click();
   await page.waitForTimeout(500);
 }

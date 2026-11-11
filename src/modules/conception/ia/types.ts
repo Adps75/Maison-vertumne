@@ -2,6 +2,11 @@ export interface OptionsGeneration {
   taille?: string;
   qualite?: string;
   imageReference?: Buffer; // Pour le style cohérent via l'endpoint d'édition
+  /**
+   * Masque d'édition : PNG RGBA de même taille que l'image, pixels transparents
+   * = zone à modifier. Le modèle s'en sert comme d'un guide (documentation OpenAI).
+   */
+  masque?: Buffer;
 }
 
 export interface ResultatGeneration {

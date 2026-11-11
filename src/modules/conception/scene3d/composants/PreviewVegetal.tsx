@@ -64,7 +64,7 @@ function PreviewBillboard({ planteId, version, hauteur_m, positionRef, altitudeE
   });
 
   return (
-    <mesh ref={meshRef} visible={false}>
+    <mesh ref={meshRef} visible={false} userData={{ horsRendu: true }}>
       <planeGeometry args={[largeur, hauteur_m]} />
       <meshStandardMaterial
         map={texture}

@@ -10,6 +10,9 @@ import { useInteractionVegetaux3D } from "../scene3d/interaction-vegetaux";
 import { PanneauVegetaux3D } from "./PanneauVegetaux3D";
 import { PanneauProprietes3D } from "./PanneauProprietes3D";
 import { BoutonTraits, type ReglagesTraits } from "./TraitsConstructionControle";
+import { PanneauRenduIA } from "./PanneauRenduIA";
+import { dessinerMention, telechargerCanvas } from "../rendu/mention";
+import type { CaptureurRendu } from "../scene3d/capture-rendu";
 
 const SceneVisuelDynamic = dynamic(
   () => import("../scene3d/composants/SceneVisuel").then((m) => m.SceneVisuel),
@@ -40,6 +43,8 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
   const [soleil, setSoleil] = useState<SoleilParams>({ ...pdv.soleil });
   const [statutSoleil, setStatutSoleil] = useState<"idle" | "saving" | "saved">("idle");
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const captureRef = useRef<CaptureurRendu | null>(null);
+  const [renduOuvert, setRenduOuvert] = useState(false);
 
   // Interaction végétaux 3D
   const {
@@ -131,29 +136,8 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
     ctx.drawImage(photoImg, 0, 0, pdv.largeur_px, pdv.hauteur_px);
     ctx.drawImage(canvas3d, 0, 0, pdv.largeur_px, pdv.hauteur_px);
 
-    const mention = "Visuel d'ambiance non contractuel, végétaux à 2-3 ans";
-    ctx.fillStyle = "rgba(0,0,0,0.5)";
-    const fontSize = Math.max(12, pdv.largeur_px * 0.012);
-    ctx.font = `${fontSize}px sans-serif`;
-    const textW = ctx.measureText(mention).width;
-    ctx.fillRect(
-      (pdv.largeur_px - textW) / 2 - 8,
-      pdv.hauteur_px - fontSize - 16,
-      textW + 16,
-      fontSize + 12,
-    );
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.fillText(mention, (pdv.largeur_px - textW) / 2, pdv.hauteur_px - 12);
-
-    out.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${pdv.nom || "visuel"}.png`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }, "image/png");
+    dessinerMention(ctx, pdv.largeur_px, pdv.hauteur_px);
+    await telechargerCanvas(out, `${pdv.nom || "visuel"}.png`);
   }, [pdv]);
 
   return (
@@ -166,6 +150,14 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
         <span className="font-medium">{pdv.nom}</span>
         <div className="flex-1" />
         <BoutonTraits reglages={reglagesTraits} />
+        <button
+          onClick={() => setRenduOuvert((v) => !v)}
+          aria-pressed={renduOuvert}
+          className={`px-3 py-1 rounded text-[0.75rem] ${renduOuvert ? "bg-ink text-paper" : "bg-paper text-ink border border-hair-light hover:bg-paper-2"}`}
+          data-testid="btn-rendu-ia"
+        >
+          Rendu IA
+        </button>
         <button
           onClick={onCalage}
           className="bg-stone-700 hover:bg-stone-600 px-3 py-1 rounded text-[0.75rem]"
@@ -189,7 +181,10 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
       </div>
 
       {/* Zone principale */}
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 relative">
+        {renduOuvert && (
+          <PanneauRenduIA pdv={pdv} captureRef={captureRef} onFermer={() => setRenduOuvert(false)} />
+        )}
         {/* Photo + scène superposée */}
         <div ref={parentRef} className="flex-1 relative bg-black overflow-hidden">
           {/* Photo pleine opacité — pointer-events: none pour laisser passer les clics au Canvas 3D */}
@@ -236,6 +231,7 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
                 previewPositionRef={previewPositionRef}
                 dragPositionRef={dragPositionRef}
                 dragElementIdRef={dragElementIdRef}
+                captureRef={captureRef}
               />
               </div>
               {/* Traits de construction : scène superposée, transparente aux clics, hors export */}

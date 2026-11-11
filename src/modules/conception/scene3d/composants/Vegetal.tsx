@@ -108,7 +108,7 @@ function VegetalBillboard({
         <meshStandardMaterial map={texture} transparent alphaTest={0.1} side={THREE.DoubleSide} />
       </mesh>
       {selected && (
-        <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} visible={selected}>
+        <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} visible={selected} userData={{ horsRendu: true }}>
           <ringGeometry args={[vegetal.diametre_m / 2 - 0.05, vegetal.diametre_m / 2 + 0.05, 32]} />
           <meshBasicMaterial color="#2563EB" side={THREE.DoubleSide} />
         </mesh>

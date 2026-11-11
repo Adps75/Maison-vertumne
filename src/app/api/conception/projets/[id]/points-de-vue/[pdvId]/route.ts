@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { supprimerFichiersRendus } from "@/modules/conception/serveur/rendus-stockage";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
 
 type Params = Promise<{ id: string; pdvId: string }>;
@@ -109,6 +110,13 @@ export async function DELETE(
     if (!pdv) {
       return NextResponse.json({ ok: false, error: "Point de vue introuvable." }, { status: 404 });
     }
+
+    // Supprimer les fichiers des rendus (les lignes partent en cascade)
+    const { data: rendus } = await supabase
+      .from("conception_rendus")
+      .select("image_path, masque_path")
+      .eq("point_de_vue_id", pdvId);
+    await supprimerFichiersRendus(supabase, rendus ?? []);
 
     // Supprimer la photo du storage
     if (pdv.photo_path) {

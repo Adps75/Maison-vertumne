@@ -13,6 +13,7 @@ import type { RaycastCallbacks } from "../interaction-vegetaux";
 import { GestionnairePointeurTerrain } from "./GestionnairePointeurTerrain";
 import { cameraParamsVersThree, soleilVersPosition } from "../../camera/projection";
 import { Nettoyeur } from "./Nettoyeur";
+import { capturerCouches, type CaptureurRendu } from "../capture-rendu";
 import { Vegetaux } from "./Vegetal";
 import { PreviewVegetal } from "./PreviewVegetal";
 
@@ -49,12 +50,14 @@ interface SceneVisuelProps {
   previewPositionRef?: React.RefObject<[number, number] | null>;
   dragPositionRef?: React.RefObject<[number, number] | null>;
   dragElementIdRef?: React.RefObject<string | null>;
+  /** Reçoit la fonction de capture des couches du rendu IA. */
+  captureRef?: React.MutableRefObject<CaptureurRendu | null>;
 }
 
 export function SceneVisuel({
   donnees, camera, soleil, altitudeEn, photoAspect,
   raycastCallbacks, onDragMove, downScreenRef,
-  selection, planteAPoser, previewPositionRef, dragPositionRef, dragElementIdRef,
+  selection, planteAPoser, previewPositionRef, dragPositionRef, dragElementIdRef, captureRef,
 }: SceneVisuelProps) {
   return (
     <Canvas
@@ -96,6 +99,7 @@ export function SceneVisuel({
         />
       )}
       <DonneesTest vegetaux={donnees.vegetaux} altitudeEn={altitudeEn} />
+      {captureRef && <EnregistreurCapture captureRef={captureRef} donnees={donnees} altitudeEn={altitudeEn} />}
     </Canvas>
   );
 }
@@ -362,6 +366,34 @@ export function TerrainOccludeur({
         : <shadowMaterial opacity={0.4} transparent depthWrite={true} />}
     </mesh>
   );
+}
+
+// ---------------------------------------------------------------------------
+// EnregistreurCapture : met à disposition la capture des couches du rendu IA.
+// ---------------------------------------------------------------------------
+
+function EnregistreurCapture({
+  captureRef,
+  donnees,
+  altitudeEn,
+}: {
+  captureRef: React.MutableRefObject<CaptureurRendu | null>;
+  donnees: DonneesScene3D;
+  altitudeEn: (x: number, y: number) => number;
+}) {
+  const { gl, scene, camera } = useThree();
+
+  useEffect(() => {
+    // Massif : zone active, ou à défaut les surfaces dessinées
+    const contoursMassif = donnees.zoneContour
+      ? [donnees.zoneContour]
+      : donnees.surfaces.map((s) => s.points);
+    captureRef.current = (largeur, hauteur) =>
+      capturerCouches({ gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn });
+    return () => { captureRef.current = null; };
+  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, altitudeEn]);
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

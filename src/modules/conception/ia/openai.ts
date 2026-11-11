@@ -52,7 +52,11 @@ export class FournisseurOpenAI implements FournisseurImage {
       form.append("model", this.model);
       form.append("prompt", prompt);
       form.append("image", new Blob([new Uint8Array(imageReference)], { type: "image/png" }), "reference.png");
+      if (options?.masque) {
+        form.append("mask", new Blob([new Uint8Array(options.masque)], { type: "image/png" }), "mask.png");
+      }
       form.append("size", options?.taille ?? "1024x1024");
+      if (options?.qualite) form.append("quality", options.qualite);
 
       const res = await fetch("https://api.openai.com/v1/images/edits", {
         method: "POST",

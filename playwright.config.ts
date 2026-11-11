@@ -41,6 +41,8 @@ export default defineConfig({
     env: {
       // Propager E2E_RELIEF_FIXTURE au serveur de dev si définie
       ...(process.env.E2E_RELIEF_FIXTURE ? { E2E_RELIEF_FIXTURE: process.env.E2E_RELIEF_FIXTURE } : {}),
+      // Fournisseur d'image simulé pour les tests du rendu IA (aucun appel réel)
+      ...(process.env.FOURNISSEUR_IMAGE ? { FOURNISSEUR_IMAGE: process.env.FOURNISSEUR_IMAGE } : {}),
     },
   },
 });

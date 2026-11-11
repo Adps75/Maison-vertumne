@@ -104,6 +104,15 @@ export function PageProjetClient() {
   const [sauvegarde, setSauvegarde] = useState<StatutSauvegarde>("sauvegarde");
   const [apercu3D, setApercu3D] = useState(false);
   const sceneRef = useRef<Scene3DRef>(null);
+  // Enregistrements d'un point de vue envoyés l'un après l'autre, dans l'ordre des
+  // actions (sinon « Suivant » puis « Valider » peuvent arriver dans le désordre et
+  // laisser la vue « à caler »).
+  const fileEnregistrementPdv = useRef<Promise<unknown>>(Promise.resolve());
+  const enregistrerPdvEnOrdre = useCallback((tache: () => Promise<void>) => {
+    const suivante = fileEnregistrementPdv.current.then(tache, tache);
+    fileEnregistrementPdv.current = suivante.catch(() => {});
+    return suivante;
+  }, []);
 
   // Terrain / topographie
   const [grilleRelief, setGrilleRelief] = useState<GrilleRelief | null>(null);
@@ -1851,7 +1860,7 @@ export function PageProjetClient() {
           orthoEmprise={projet.ortho_emprise}
           batiments={projet.batiments_geojson ?? []}
           parcelles={projet.parcelles_geojson}
-          onSave={async (camera, statut) => {
+          onSave={(camera, statut) => enregistrerPdvEnOrdre(async () => {
             await fetch(`/api/conception/projets/${id}/points-de-vue/${pdvActif.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
@@ -1860,8 +1869,8 @@ export function PageProjetClient() {
             const updated = { ...pdvActif, camera, statut };
             setPdvActif(updated);
             setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-          }}
-          onFocaleChange={async (focale35mm) => {
+          })}
+          onFocaleChange={(focale35mm) => enregistrerPdvEnOrdre(async () => {
             const aspect = pdvActif.largeur_px / pdvActif.hauteur_px;
             const fov_v = vfovFromFocal35mm(focale35mm, aspect);
             const newExif = { ...pdvActif.exif, focale_35mm: focale35mm };
@@ -1873,7 +1882,7 @@ export function PageProjetClient() {
             const updated = { ...pdvActif, exif: newExif, camera: { ...pdvActif.camera, fov_v } };
             setPdvActif(updated);
             setPointsDeVue((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-          }}
+          })}
           onClose={() => { setModeVue(null); setPdvActif(null); }}
           onVisuel={() => setModeVue("visuel")}
           reglagesTraits={reglagesTraits}
