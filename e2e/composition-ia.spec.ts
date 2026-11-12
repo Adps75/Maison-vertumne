@@ -9,6 +9,7 @@
  * composition-plan.png, composition-visuel.png.
  */
 
+import fs from "fs";
 import { test, expect, type Page } from "@playwright/test";
 import { nettoyageApres } from "./outils/nettoyage";
 
@@ -19,6 +20,7 @@ test.afterAll(nettoyageApres({ projets: "E2E-compo-", plantes: (p) => p.nom_lati
 
 let projetId: string | null = null;
 const MASSIF_ID = crypto.randomUUID();
+const MASSIF_DERRIERE_ID = crypto.randomUUID();
 const JETON = `t${Date.now().toString(36)}`;
 let massifPoints: [number, number][] = [];
 
@@ -95,20 +97,54 @@ function dansPolygone([x, y]: [number, number], poly: [number, number][]): boole
 }
 
 /** Brief → palette → ajout à la bibliothèque → composition, depuis le bouton donné. */
-async function composer(page: Page, bouton: string, captures: boolean) {
+/** Résultat de l'étape d'analyse, pour les vérifications. */
+let derniereCompositionId: string | null = null;
+
+/** Brief → analyse (validée) → palette → ajout à la bibliothèque → composition. */
+async function composer(page: Page, bouton: string, captures: boolean, attendreReutilisation = false) {
   await page.locator(`[data-testid='${bouton}']`).click();
   const assistant = page.locator("[data-testid='assistant-composition']");
   await expect(assistant).toBeVisible();
-  // Contour : la surface dessinée (le massif)
   const choix = page.locator("[data-testid='choix-contour']");
-  const option = choix.locator("option", { hasText: "Surface dessinée" }).first();
-  await choix.selectOption((await option.getAttribute("value"))!);
+
+  // Condition : le massif situé derrière la caméra n'est vu par aucune vue calée
+  await choix.selectOption(MASSIF_DERRIERE_ID);
+  await expect(page.locator("[data-testid='message-sans-vue']")).toHaveText("Calez d'abord au moins une vue qui montre le massif.");
+  await expect(page.locator("[data-testid='btn-analyser']")).toBeDisabled();
+
+  // Contour : le massif devant la caméra
+  await choix.selectOption(MASSIF_ID);
+  await expect(page.locator("[data-testid='message-sans-vue']")).toHaveCount(0);
   await page.locator("[data-testid='brief-description']").fill(`[e2e:${JETON}] Massif naturel lumineux, graminées et vivaces bleues et blanches, peu d'arrosage.`);
   await expect(page.locator("[data-testid='brief-climat']")).toHaveValue(/Île-de-France : étés de plus en plus chauds et secs/);
   await expect(page.locator("[data-testid='contexte-massif']")).toContainText("m²");
   if (captures) await page.screenshot({ path: "e2e/screenshots/composition-brief.png" });
 
-  await page.locator("[data-testid='btn-proposer-palette']").click();
+  // Analyse des vues calées
+  const reponseAnalyse = page.waitForResponse(
+    // La première réponse peut être { ok: false, code: "images_requises" } (aussi en 200) :
+    // attendre celle qui crée la composition
+    async (r) => r.request().method() === "POST" && new URL(r.url()).pathname.endsWith("/compositions") && r.status() === 200
+      && !!(await r.json().catch(() => null))?.compositionId,
+    { timeout: 120_000 },
+  );
+  await page.locator("[data-testid='btn-analyser']").click();
+  derniereCompositionId = (await (await reponseAnalyse).json()).compositionId;
+  await expect(page.locator("[data-testid='etape-analyse']")).toBeVisible({ timeout: 60_000 });
+  if (attendreReutilisation) {
+    await expect(page.locator("[data-testid='analyse-reutilisee']")).toBeVisible();
+  } else {
+    // Validation : corriger l'espèce du premier élément, retirer le second, garder l'ajout au plan
+    const existants = page.locator("[data-testid='existant']");
+    await expect(existants).toHaveCount(2);
+    await existants.nth(0).locator("[data-testid='existant-espece']").fill("Taxus baccata (if)");
+    await expect(existants.nth(0).locator("[data-testid='existant-ajouter-plan']")).toBeChecked();
+    await existants.nth(1).locator("[data-testid='existant-retirer']").click();
+    await expect(existants).toHaveCount(1);
+    if (captures) await page.screenshot({ path: "e2e/screenshots/composition-analyse.png" });
+  }
+  await page.locator("[data-testid='btn-valider-analyse']").click();
+
   await expect(page.locator("[data-testid='etape-palette']")).toBeVisible({ timeout: 30000 });
   await expect(page.locator("[data-testid='palette-retenue']").first()).toBeVisible();
 
@@ -147,9 +183,15 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     const v: [number, number] = [Math.cos(a), -Math.sin(a)]; // latéral
     const pt = (l: number, d: number): [number, number] => [c[0] + v[0] * l + u[0] * d, c[1] + v[1] * l + u[1] * d];
     massifPoints = [pt(-3, -1.5), pt(3, -1.5), pt(3, 1.5), pt(-3, 1.5)];
+    // Second massif 8 m DERRIÈRE la caméra : aucune vue calée ne le voit
+    const derriere = (l: number, d: number): [number, number] => [cam.x + v[0] * l - u[0] * (8 + d), cam.y + v[1] * l - u[1] * (8 + d)];
+    const massifDerriere = [derriere(-2, -1), derriere(2, -1), derriere(2, 1), derriere(-2, 1)];
     const res = await page.request.patch(`/api/conception/projets/${projetId}/elements`, {
       data: {
-        upserts: [{ id: MASSIF_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, proprietes: {}, ordre: 1, geometrie: { type: "polygone", points: massifPoints } }],
+        upserts: [
+          { id: MASSIF_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, proprietes: {}, ordre: 1, geometrie: { type: "polygone", points: massifPoints } },
+          { id: MASSIF_DERRIERE_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, proprietes: {}, ordre: 2, geometrie: { type: "polygone", points: massifDerriere } },
+        ],
         suppressions: [], updated_at: null,
       },
     });
@@ -171,10 +213,31 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     const apres = await plantesDuPlan(page);
     const compo = apres.filter((e) => e.proprietes.composition_id);
     expect(compo.length).toBeGreaterThan(5);
-    expect(apres.length).toBe(avant + compo.length);
+    expect(apres.length).toBe(avant + compo.length + 1); // + 1 : le végétal existant validé
     for (const e of compo) expect(dansPolygone(e.geometrie.position!, massifPoints)).toBe(true);
     // Aucun conflit d'écartement dans le panneau Conflits après composition
     await expect(page.locator("[data-testid='panneau-conflits']")).toHaveCount(0);
+
+    // L'existant validé (« Ajouter au plan ») est sur le plan, au statut « existant »
+    const existantsPlan = apres.filter((e) => (e as unknown as { statut: string }).statut === "existant");
+    expect(existantsPlan.length).toBe(1);
+    expect(existantsPlan[0].proprietes.nom_latin).toBe("Taxus baccata");
+
+    // Aucune plante composée dans les cases de l'existant conservé
+    const exclusions = await page.evaluate(() => ((window as unknown as Record<string, unknown>).__compositionTest as { exclusions: { x0: number; y0: number; x1: number; y1: number }[] }).exclusions);
+    expect(exclusions.length).toBeGreaterThan(0);
+    for (const e of compo) {
+      const [x, y] = e.geometrie.position!;
+      for (const r of exclusions) expect(x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1).toBe(false);
+    }
+
+    // Images réellement envoyées au modèle
+    for (const nom of ["plan", "vue-1"]) {
+      const img = await page.request.get(`/api/conception/projets/${projetId}/compositions/${derniereCompositionId}/images/${nom}`);
+      expect(img.ok(), `image ${nom}`).toBeTruthy();
+      expect(img.headers()["content-type"]).toBe("image/jpeg");
+      fs.writeFileSync(`e2e/screenshots/analyse-${nom}.jpg`, await img.body());
+    }
     const parEspece = new Set(compo.map((e) => e.proprietes.plante_id));
     expect(parEspece.size).toBeGreaterThanOrEqual(3);
     await page.waitForTimeout(1500);
@@ -198,7 +261,7 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     await page.waitForFunction((n) => {
       const t = (window as unknown as Record<string, unknown>).__visuelTest as { vegetaux: unknown[]; vegetauxAffiches: () => number } | undefined;
       return !!t && t.vegetaux.length === n && t.vegetauxAffiches() >= n;
-    }, compo2.length + avant, { timeout: 30000 });
+    }, compo2.length + avant, { timeout: 30000 }); // le végétal existant (sur le plan) n'est jamais rendu dans le Visuel
     await page.waitForTimeout(1500);
     await page.screenshot({ path: "e2e/screenshots/composition-visuel.png" });
     await page.locator("[data-testid='btn-retour-visuel']").click();
@@ -209,7 +272,8 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     await page.locator("body").click({ position: { x: 5, y: 5 } }).catch(() => {});
     await page.keyboard.press("Control+z");
     await expect.poll(async () => (await plantesDuPlan(page)).filter((e) => e.proprietes.composition_id).length).toBe(0);
-    expect((await plantesDuPlan(page)).length).toBe(avant);
+    // Seule la composition est annulée : l'existant validé (action distincte) reste sur le plan
+    expect((await plantesDuPlan(page)).length).toBe(avant + 1);
     // Laisser la sauvegarde différentielle enregistrer l'annulation avant de fermer la page
     await page.waitForTimeout(4000);
   });
@@ -220,7 +284,7 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     await page.waitForTimeout(4000);
     // Première composition (étape 4), gardée et enregistrée
     await page.locator("[data-testid='etape-4']").click();
-    await composer(page, "btn-composer-ia", false);
+    await composer(page, "btn-composer-ia", false, true); // même contour, mêmes vues : analyse réutilisée
     // Une composition du test précédent peut subsister en base : la remplacer si demandé
     const confirmer = page.locator("[data-testid='btn-confirmer-remplacement']");
     await expect(confirmer.or(page.locator("[data-testid='barre-composition']"))).toBeVisible({ timeout: 15000 });
@@ -234,7 +298,7 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     await page.waitForTimeout(1000);
     await page.locator("[data-testid^='pdv-']").first().click();
     await expect(page.locator("[data-testid='vue-visuel']")).toBeVisible({ timeout: 15000 });
-    await composer(page, "btn-composer-ia-visuel", false);
+    await composer(page, "btn-composer-ia-visuel", false, true);
     await expect(page.locator("[data-testid='confirmer-remplacement']")).toBeVisible();
     await page.locator("[data-testid='btn-confirmer-remplacement']").click();
     await expect(page.locator("[data-testid='barre-composition']")).toBeVisible();
@@ -249,4 +313,60 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
       .toBe(premiere.join(","));
   });
 
+
+  test("cas réel : composition existante + plante sans image → messages clairs, aucune erreur 500", async ({ page }) => {
+    // Toute réponse serveur ≥ 500 pendant le parcours fait échouer le test
+    const erreurs500: string[] = [];
+    page.on("response", (r) => { if (r.status() >= 500) erreurs500.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
+
+    // Plante validée SANS image, en tête de la bibliothèque (la palette simulée la retient)
+    const creee = await page.request.post("/api/conception/plantes", {
+      data: { nom_commun: "Achillée (test)", nom_latin: `Achillea millefolium 'E2E ${JETON}'`, categorie: "vivace", largeur_adulte_m: 0.5, hauteur_adulte_m: 0.6 },
+    });
+    const planteId = (await creee.json()).id as string;
+    expect(planteId).toBeTruthy();
+    expect((await page.request.patch(`/api/conception/plantes/${planteId}`, { data: { statut: "validee" } })).ok()).toBeTruthy();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/conception/${projetId}`);
+    await page.waitForTimeout(4000);
+    await page.locator("[data-testid='etape-4']").click();
+    await page.locator("[data-testid='btn-composer-ia']").click();
+    await page.locator("[data-testid='choix-contour']").selectOption(MASSIF_ID);
+    await page.locator("[data-testid='brief-description']").fill(`[e2e:${JETON}] Massif de vivaces.`);
+    const reponseAnalyse = page.waitForResponse(
+      (r) => r.request().method() === "POST" && new URL(r.url()).pathname.endsWith("/compositions") && r.status() === 200,
+      { timeout: 120_000 },
+    );
+    await page.locator("[data-testid='btn-analyser']").click();
+    const compositionId = (await (await reponseAnalyse).json()).compositionId as string;
+    await expect(page.locator("[data-testid='etape-analyse']")).toBeVisible({ timeout: 60_000 });
+    await page.locator("[data-testid='btn-valider-analyse']").click();
+    await expect(page.locator("[data-testid='etape-palette']")).toBeVisible({ timeout: 30_000 });
+
+    // Message clair dans la barre du bas, composition impossible
+    await expect(page.locator("[data-testid='message-sans-images']")).toContainText("Achillée (test) n'a pas d'image. Régénérer ?");
+    await expect(page.locator("[data-testid='btn-composer']")).toBeDisabled();
+    await page.screenshot({ path: "e2e/screenshots/composition-plante-sans-image.png" });
+
+    // La route refuse aussi, avec un code et un message explicites (jamais 500)
+    const refus = await page.request.post(`/api/conception/projets/${projetId}/compositions/${compositionId}/intention`, { data: { plantes: [planteId] } });
+    expect(refus.status()).toBe(409);
+    const corps = await refus.json();
+    expect(corps.code).toBe("images_manquantes");
+    expect(corps.error).toBe("Achillée (test) n'a pas d'image.");
+
+    // Régénérer, puis composer : la composition existante est signalée
+    await page.locator("[data-testid='btn-regenerer-images']").click();
+    await expect(page.locator("[data-testid='message-sans-images']")).toHaveCount(0, { timeout: 120_000 });
+    await expect(page.locator("[data-testid='btn-composer']")).toBeEnabled();
+    await page.locator("[data-testid='btn-composer']").click();
+    await expect(page.locator("[data-testid='message-composition-existante']")).toHaveText("Une composition existe déjà sur ce massif. La remplacer ?");
+    await page.screenshot({ path: "e2e/screenshots/composition-existante.png" });
+    await page.locator("[data-testid='btn-confirmer-remplacement']").click();
+    await expect(page.locator("[data-testid='barre-composition']")).toBeVisible();
+    await page.locator("[data-testid='btn-garder-composition']").click();
+
+    expect(erreurs500, "réponses serveur en erreur 500").toEqual([]);
+  });
 });

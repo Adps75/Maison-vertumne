@@ -4,7 +4,7 @@ import type { Element } from "../types";
 let timer: ReturnType<typeof setTimeout> | null = null;
 let updatedAt: string | null = null;
 
-export type StatutSauvegarde = "sauvegarde" | "en_cours" | "non_sauvegarde" | "erreur";
+export type StatutSauvegarde = "sauvegarde" | "en_cours" | "non_sauvegarde" | "erreur" | "conflit";
 
 export function setUpdatedAt(ts: string) {
   updatedAt = ts;
@@ -58,7 +58,8 @@ export function planifierSauvegarde(
       const data = await res.json();
 
       if (res.status === 409) {
-        onStatut("erreur");
+        // Vrai conflit : le projet a été modifié dans un autre onglet
+        onStatut("conflit");
         console.warn("[sauvegarde] Conflit : le projet a été modifié ailleurs.");
         return;
       }

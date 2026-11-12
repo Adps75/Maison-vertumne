@@ -9,8 +9,12 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 
 test.use({ storageState: "e2e/.auth/state.json" });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ projets: "E2E-traits-" }));
 
 let projetId: string | null = null;
 const MASSIF_ID = crypto.randomUUID();
@@ -319,10 +323,4 @@ test.describe.serial("Traits de construction", () => {
     await page.locator("[data-testid='btn-retour-calage']").click();
   });
 
-  test("cleanup", async ({ page }) => {
-    if (projetId) {
-      const res = await page.request.delete(`/api/conception/projets/${projetId}`);
-      expect(res.ok()).toBeTruthy();
-    }
-  });
 });

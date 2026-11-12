@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { supprimerDossier } from "@/modules/conception/serveur/stockage";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
 
 export async function GET(
@@ -103,6 +104,8 @@ export async function DELETE(
     if (projet?.ortho_path) {
       await supabase.storage.from("conception").remove([projet.ortho_path]);
     }
+    // Tous les autres fichiers du projet : photos des vues, rendus, relief
+    await supprimerDossier(supabase, `projets/${id}`);
 
     const { error } = await supabase
       .from("conception_projets")

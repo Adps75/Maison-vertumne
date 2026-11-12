@@ -6,10 +6,14 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 
 test.use({
   storageState: "e2e/.auth/state.json",
 });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ projets: "E2E-3d-" }));
 
 let projetId: string | null = null;
 
@@ -53,21 +57,6 @@ async function creerProjetE2E(page: import("@playwright/test").Page): Promise<st
   return match?.[1] ?? null;
 }
 
-async function supprimerProjetE2E(page: import("@playwright/test").Page) {
-  await page.goto("/conception");
-  await page.waitForTimeout(1000);
-
-  const suppBtn = page.locator("text=Supprimer").first();
-  if (await suppBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await suppBtn.click();
-    await page.waitForTimeout(300);
-    const confirmBtn = page.locator("text=Supprimer").last();
-    if (await confirmBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await confirmBtn.click();
-      await page.waitForTimeout(1000);
-    }
-  }
-}
 
 test.describe.serial("Vue 3D", () => {
   test.setTimeout(90_000);
@@ -155,9 +144,4 @@ test.describe.serial("Vue 3D", () => {
     expect(data.vegetaux[0].position[1]).toBe(PLANTE_POSITION[1]);
   });
 
-  test("teardown : supprimer le projet E2E", async ({ page }) => {
-    if (projetId) {
-      await supprimerProjetE2E(page);
-    }
-  });
 });

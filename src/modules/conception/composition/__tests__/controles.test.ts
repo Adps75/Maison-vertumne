@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { coutAnthropic, nettoyerPalette, type PlanteBibliotheque } from "../controles";
 import { schemaPalette, schemaIntention, schemaBrief, CONTEXTE_CLIMATIQUE_DEFAUT, type Palette } from "../schemas";
+import { nettoyerAnalyse } from "../controles";
+import { schemaAnalyse } from "../schemas";
+import { grilleMassif } from "../grille";
 
 const biblio = (id: string, nom_latin: string): PlanteBibliotheque => ({
   id, nom_latin, nom_commun: id, categorie: "vivace", hauteur_adulte_m: 0.6, largeur_adulte_m: 0.5,
@@ -70,5 +73,31 @@ describe("coût Anthropic", () => {
   it("Claude Sonnet 5.5 et modèle inconnu", () => {
     expect(coutAnthropic("claude-sonnet-5-5", { input_tokens: 1_000_000, output_tokens: 0 })).toBeCloseTo(1.84, 4);
     expect(coutAnthropic("modele-inconnu", { input_tokens: 1000, output_tokens: 1000 })).toBe(0);
+  });
+});
+
+
+describe("nettoyage de l'analyse", () => {
+  const g = grilleMassif([[-1, 8], [3, 8], [3, 12], [-1, 12]]); // 10 × 10 cases
+  const base = {
+    style_existant: "s", ambiance: "a", premier_plan: "p", fond: "f", remarques: "",
+    ombre_lumiere: { ombre: [{ cases: ["b2", "Z9"], description: "o" }], lumiere: [{ cases: ["Q1"], description: "l" }] },
+  };
+  const el = (cases: string[]) => ({ nature: "arbre" as const, description: "d", espece_probable: null, confiance: "faible" as const, cases, hauteur_estimee_m: null, recommandation: "conserver" as const });
+
+  it("cases normalisées, hors grille écartées, élément sans case retiré et signalé", () => {
+    const r = nettoyerAnalyse({ ...base, existants: [el(["c4", "C4", "K1"]), el(["Z99"])] }, g);
+    expect(r.existants.map((e) => e.cases)).toEqual([["C4"]]);
+    expect(r.remarques).toMatch(/1 élément/);
+    expect(r.ombre_lumiere.ombre).toEqual([{ cases: ["B2"], description: "o" }]);
+    expect(r.ombre_lumiere.lumiere).toEqual([]);
+  });
+
+  it("schéma : nature inconnue ou confiance manquante refusées", () => {
+    expect(schemaAnalyse.safeParse({ ...base, existants: [el(["A1"])] }).success).toBe(true);
+    expect(schemaAnalyse.safeParse({ ...base, existants: [{ ...el(["A1"]), nature: "licorne" }] }).success).toBe(false);
+    const sansConfiance: Record<string, unknown> = { ...el(["A1"]) };
+    delete sansConfiance.confiance;
+    expect(schemaAnalyse.safeParse({ ...base, existants: [sansConfiance] }).success).toBe(false);
   });
 });

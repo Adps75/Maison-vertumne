@@ -83,6 +83,8 @@ interface Projet {
   id: string;
   nom: string;
   updated_at: string;
+  /** Date de référence des éléments pour la détection de conflit (migration 00024). */
+  elements_modifies_le?: string | null;
   parcelles_geojson: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
   batiments_geojson: {
     geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
@@ -208,7 +210,8 @@ export function PageProjetClient() {
       .then(([projetData, elementsData]) => {
         if (projetData.ok) {
           setProjet(projetData.projet);
-          setUpdatedAt(projetData.projet.updated_at);
+          // Référence de conflit propre aux éléments ; repli sur updated_at sans la migration 00024
+          setUpdatedAt(projetData.projet.elements_modifies_le ?? projetData.projet.updated_at);
           setAltRefNgf(projetData.projet.altitude_reference_ngf ?? null);
           if (typeof projetData.projet.tolerance_chevauchement === "number") {
             setTolerance(projetData.projet.tolerance_chevauchement);
@@ -1366,8 +1369,13 @@ export function PageProjetClient() {
     zoneActive: etat.zoneActive,
     dispatch,
     batiments: projet?.batiments_geojson ?? [],
-    vues: pointsDeVue.map((v, i) => ({ nom: v.nom || `Vue ${i + 1}`, camera: v.camera, statut: v.statut })),
+    vues: pointsDeVue.map((v, i) => ({
+      id: v.id, projetId: v.projet_id, nom: v.nom || `Vue ${i + 1}`, camera: v.camera, statut: v.statut,
+      largeurPx: v.largeur_px, hauteurPx: v.hauteur_px,
+    })),
     altitudeEn: grilleRelief || pointsCotes.length > 0 ? altitudeEn : null,
+    altitudeVue: altitudeEn,
+    ortho: projet?.ortho_url && projet.ortho_emprise ? { url: projet.ortho_url, emprise: projet.ortho_emprise } : null,
     tolerance,
   });
 

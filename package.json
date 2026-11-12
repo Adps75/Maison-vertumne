@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "nettoyer:e2e": "node scripts/nettoyer-e2e.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

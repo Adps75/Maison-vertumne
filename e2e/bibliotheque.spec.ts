@@ -3,8 +3,12 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 
 test.use({ storageState: "e2e/.auth/state.json" });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ plantes: (p) => p.nom_commun === "E2E-Test-Plante" && p.nom_latin.startsWith("Testus e2e-") }));
 
 test.describe("Bibliothèque végétale", () => {
   test.setTimeout(60_000);

@@ -3,6 +3,8 @@
  */
 
 import type { Palette } from "./schemas";
+import { lireCase, etiquette, type Grille } from "./grille";
+import type { Analyse } from "./schemas";
 
 export interface PlanteBibliotheque {
   id: string;
@@ -66,4 +68,30 @@ export function nettoyerPalette(p: Palette, bibliotheque: PlanteBibliotheque[]):
     } else ajouts.push(a);
   }
   return { retenues, ajouts, remarques: remarques.filter(Boolean).join(" ") };
+}
+
+// ─── Analyse ───────────────────────────────────────────────────────────
+
+
+/** Normalise les cases (« c4 » → « C4 ») et écarte celles hors grille ; un élément sans case valide est retiré. */
+export function nettoyerAnalyse(a: Analyse, g: Grille): Analyse {
+  const cases = (liste: string[]) => {
+    const sortie: string[] = [];
+    for (const c of liste) {
+      const lu = lireCase(g, c);
+      if (!lu) continue;
+      const e = etiquette(lu.colonne, lu.ligne);
+      if (!sortie.includes(e)) sortie.push(e);
+    }
+    return sortie;
+  };
+  const existants = a.existants.map((e) => ({ ...e, cases: cases(e.cases) })).filter((e) => e.cases.length > 0);
+  const retires = a.existants.length - existants.length;
+  const zones = (z: { cases: string[]; description: string }[]) => z.map((x) => ({ ...x, cases: cases(x.cases) })).filter((x) => x.cases.length > 0);
+  return {
+    ...a,
+    existants,
+    ombre_lumiere: { ombre: zones(a.ombre_lumiere.ombre), lumiere: zones(a.ombre_lumiere.lumiere) },
+    remarques: retires > 0 ? `${a.remarques} ${retires} élément(s) sans case valide ignoré(s).`.trim() : a.remarques,
+  };
 }

@@ -3,7 +3,7 @@
 interface Props {
   saisie: string;
   message: string;
-  sauvegarde: "sauvegarde" | "en_cours" | "non_sauvegarde" | "erreur";
+  sauvegarde: "sauvegarde" | "en_cours" | "non_sauvegarde" | "erreur" | "conflit";
 }
 
 export function BarreSaisie({ saisie, message, sauvegarde }: Props) {
@@ -12,6 +12,7 @@ export function BarreSaisie({ saisie, message, sauvegarde }: Props) {
     en_cours: "Enregistrement…",
     non_sauvegarde: "Non enregistré",
     erreur: "Erreur de sauvegarde",
+    conflit: "Non enregistré : projet modifié dans un autre onglet. Rechargez la page.",
   };
 
   const statusColor = {
@@ -19,6 +20,7 @@ export function BarreSaisie({ saisie, message, sauvegarde }: Props) {
     en_cours: "text-stone",
     non_sauvegarde: "text-brass",
     erreur: "text-red-600",
+    conflit: "text-red-600 font-medium",
   };
 
   return (
@@ -34,7 +36,7 @@ export function BarreSaisie({ saisie, message, sauvegarde }: Props) {
         {saisie}
         <span className="animate-pulse ml-px text-brass">|</span>
       </span>
-      <span className={`text-[0.72rem] flex-shrink-0 ${statusColor[sauvegarde]}`}>
+      <span className={`text-[0.72rem] flex-shrink-0 ${statusColor[sauvegarde]}`} data-testid="statut-sauvegarde" data-statut={sauvegarde}>
         {statusLabel[sauvegarde]}
       </span>
     </div>

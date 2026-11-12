@@ -91,7 +91,9 @@ export function preparerDonneesScene(
           couleur: couleurs[el.calque] ?? "#888888",
         });
       }
-    } else if (el.type === "vegetal" && el.geometrie.type === "point") {
+    } else if (el.type === "vegetal" && el.geometrie.type === "point" && el.statut !== "existant") {
+      // Les végétaux « existants » sont réellement présents sur les photos : ils ne
+      // s'affichent que sur le plan, jamais dans le Visuel, la vue 3D libre ni le rendu IA.
       const pos = el.geometrie.position;
       if (pointDansEmprise(pos, emprise)) {
         const planteId = el.proprietes.plante_id as string | undefined;

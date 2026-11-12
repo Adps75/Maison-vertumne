@@ -3,8 +3,12 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 
 test.use({ storageState: "e2e/.auth/state.json" });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ projets: "E2E-veg3d-" }));
 
 let projetId: string | null = null;
 
@@ -28,17 +32,6 @@ async function creerProjet(page: import("@playwright/test").Page) {
   return page.url().match(/\/conception\/([a-f0-9-]+)/)?.[1] ?? null;
 }
 
-async function supprimerProjet(page: import("@playwright/test").Page) {
-  await page.goto("/conception");
-  await page.waitForTimeout(1000);
-  const btn = page.locator("text=Supprimer").first();
-  if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await btn.click();
-    await page.waitForTimeout(300);
-    await page.locator("text=Supprimer").last().click();
-    await page.waitForTimeout(1000);
-  }
-}
 
 async function importerPhotoSynthetique(page: import("@playwright/test").Page): Promise<void> {
   await page.evaluate(() => {
@@ -80,8 +73,15 @@ async function calerPhoto(page: import("@playwright/test").Page) {
   await page.locator("[data-testid='btn-suivant']").click();
   await page.waitForTimeout(300);
   // Étape 4 : valider → visuel
+  // Attendre l'enregistrement effectif du statut « calée » avant de quitter
+  const enregistrement = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && /\/points-de-vue\/[^/]+$/.test(new URL(r.url()).pathname)
+      && (r.request().postData() ?? "").includes('"statut":"cale"'),
+    { timeout: 60_000 },
+  );
   await page.locator("[data-testid='btn-valider-calage']").click();
-  await page.waitForTimeout(3000);
+  expect((await enregistrement).ok()).toBeTruthy();
+  await page.waitForTimeout(1000);
   // Fermer le visuel
   await page.locator("[data-testid='btn-retour-visuel']").click();
   await page.waitForTimeout(500);
@@ -442,7 +442,4 @@ test.describe.serial("Vues, végétaux 3D, statut calée", () => {
     }
   });
 
-  test("cleanup", async ({ page }) => {
-    if (projetId) await supprimerProjet(page);
-  });
 });

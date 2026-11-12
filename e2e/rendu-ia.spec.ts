@@ -10,9 +10,13 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 import sharp from "sharp";
 
 test.use({ storageState: "e2e/.auth/state.json" });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ projets: "E2E-rendu-" }));
 
 let projetId: string | null = null;
 let pdvId: string | null = null;
@@ -234,7 +238,10 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     // (les navigateurs décodent le JPEG de la photo chacun à leur manière).
     const base = `/api/conception/projets/${projetId}/points-de-vue/${pdvId}`;
     const brut = async (url: string, canaux: 1 | 4) => {
-      const buf = Buffer.from(await (await page.request.get(url)).body());
+      const reponse = await page.request.get(url);
+      const type = reponse.headers()["content-type"] ?? "";
+      expect(reponse.ok() && type.startsWith("image/"), `${url} → ${reponse.status()} ${type} ${(await reponse.text()).slice(0, 200)}`).toBe(true);
+      const buf = Buffer.from(await reponse.body());
       const img = canaux === 4 ? sharp(buf).rotate().ensureAlpha() : sharp(buf).extractChannel(0);
       const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
       return { data, largeur: info.width, hauteur: info.height };
@@ -321,10 +328,4 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     expect((await listeRendus(page)).length).toBe(2);
   });
 
-  test("cleanup", async ({ page }) => {
-    if (projetId) {
-      const res = await page.request.delete(`/api/conception/projets/${projetId}`);
-      expect(res.ok()).toBeTruthy();
-    }
-  });
 });

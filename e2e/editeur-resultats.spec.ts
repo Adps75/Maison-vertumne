@@ -5,8 +5,12 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 
 test.use({ storageState: "e2e/.auth/state.json" });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ projets: "E2E-resultats-" }));
 
 let projetId: string | null = null;
 
@@ -37,17 +41,6 @@ async function creerProjetE2E(page: import("@playwright/test").Page): Promise<st
   return match?.[1] ?? null;
 }
 
-async function supprimerProjetE2E(page: import("@playwright/test").Page) {
-  await page.goto("/conception");
-  await page.waitForTimeout(1000);
-  const suppBtn = page.locator("text=Supprimer").first();
-  if (await suppBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await suppBtn.click();
-    await page.waitForTimeout(300);
-    await page.locator("text=Supprimer").last().click();
-    await page.waitForTimeout(1000);
-  }
-}
 
 async function canvasCentre(page: import("@playwright/test").Page) {
   const canvas = page.locator("canvas").first();
@@ -198,10 +191,4 @@ test.describe.serial("Résultats réels", () => {
     expect(countAfter).toBe(countBefore + 1);
   });
 
-  test("cleanup", async ({ page }) => {
-    if (projetId) {
-      await supprimerProjetE2E(page);
-      projetId = null;
-    }
-  });
 });

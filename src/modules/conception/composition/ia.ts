@@ -14,9 +14,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
 import {
-  schemaPalette, schemaIntention, LIBELLES_STYLES,
-  type Brief, type Contexte, type Palette, type Intention,
+  schemaPalette, schemaIntention, schemaAnalyse, LIBELLES_STYLES,
+  type Brief, type Contexte, type Palette, type Intention, type Analyse, type AnalyseValidee,
 } from "./schemas";
+import { decrireGrille, type Grille } from "./grille";
 import { coutAnthropic, nettoyerPalette, type PlanteBibliotheque } from "./controles";
 
 export type { PlanteBibliotheque } from "./controles";
@@ -37,6 +38,15 @@ export class ErreurComposition extends Error {
 
 // ─── Modèle, options, coût ─────────────────────────────────────────────
 
+/** Message d'erreur si l'IA de composition n'est pas configurée sur le serveur, sinon null. */
+export function erreurConfigurationIA(): string | null {
+  if (process.env.COMPOSITION_IA === "simule") return null;
+  if (!process.env.ANTHROPIC_MODEL_COMPOSITION?.trim()) {
+    return "La composition IA n'est pas configurée sur le serveur : la variable ANTHROPIC_MODEL_COMPOSITION est absente (ajoutez-la à .env.local, puis redémarrez le serveur).";
+  }
+  return null;
+}
+
 export function modeleComposition(): string {
   const m = process.env.ANTHROPIC_MODEL_COMPOSITION?.trim();
   if (!m) throw new ErreurComposition("ANTHROPIC_MODEL_COMPOSITION n'est pas configuré.", 500);
@@ -50,7 +60,11 @@ const MODELES_AVEC_REPLI = new Set(["claude-fable-5-2", "claude-fable-5-1", "cla
 
 // ─── Appel générique ───────────────────────────────────────────────────
 
-async function appelerStructure<S extends z.ZodType>(schema: S, systeme: string, message: string): Promise<ResultatIA<z.infer<S>>> {
+async function appelerStructure<S extends z.ZodType>(
+  schema: S,
+  systeme: string,
+  message: string | Anthropic.Beta.BetaContentBlockParam[],
+): Promise<ResultatIA<z.infer<S>>> {
   const modele = modeleComposition();
   const client = new Anthropic();
   const recent = MODELES_RECENTS.test(modele);
@@ -104,6 +118,7 @@ Règles :
 - Signale toute incertitude (identification, rusticité, disponibilité en pépinière) dans le champ prévu.
 - Dimensions réalistes pour l'Île-de-France ; largeur à 3 ans inférieure ou égale à la largeur adulte.
 - Une palette resserrée (souvent 5 à 9 espèces) avec des répétitions vaut mieux qu'un catalogue.
+- Si une analyse du site est fournie : harmonise avec l'existant conservé (par exemple reprendre des topiaires en éléments de structure, prolonger une essence présente), adapte les espèces à l'ombre et à la lumière observées, ne propose rien qui entre en concurrence avec un sujet conservé.
 - Tu ne fournis jamais de positions ni de coordonnées : le placement est calculé par un algorithme.
 Réponds en français.`;
 
@@ -114,6 +129,7 @@ Règles :
 - Quantités cohérentes avec la surface, la largeur à 3 ans des plantes et la densité demandée (serrée, standard, aérée) : le massif doit être couvert à 3 ans sans surdensité.
 - Répétitions et rythmes plutôt que des sujets isolés, sauf ponctuations et sujets de structure.
 - Pour une structure géométrique, renseigne la symétrie et les motifs (par exemple sujets de structure en alignement régulier encadrant des masses fleuries) ; sinon mets « geometrie » à null.
+- Si une analyse du site est fournie : la profondeur suit la vue principale (premier plan et fond observés), les plantes d'ombre vont vers les zones d'ombre observées, et les sujets existants conservés occupent déjà leur place (les quantités tiennent compte de la surface qu'ils prennent).
 - Tu ne fournis jamais de positions ni de coordonnées : un algorithme place les plantes selon ton intention.
 Réponds en français.`;
 
@@ -153,23 +169,100 @@ function texteBibliotheque(b: PlanteBibliotheque[]): string {
   })).join("\n");
 }
 
+// ─── Analyse des vues photo calées ─────────────────────────────────────
+
+const SYSTEME_ANALYSE = `Tu es paysagiste concepteur. Tu analyses un jardin existant à partir d'un plan vu de dessus et de photos prises sur place, avant de composer un massif.
+Les images partagent la même grille de repères : sur le plan, la grille est dessinée sur l'orthophoto ; sur chaque photo, la même grille est projetée au sol grâce au calage de la caméra, avec les mêmes étiquettes (lettres pour les colonnes, chiffres pour les lignes). Le contour orange est le massif à composer.
+Utilise ces correspondances pour situer chaque élément observé dans les cases de la grille.
+Règles :
+- Identifie l'existant visible dans le massif et à ses abords : arbres, arbustes, topiaires, haies, massifs, graminées, couvre-sols, grimpantes, statues, murs, bordures, dallages, mobilier.
+- Pour chaque élément : nature, espèce probable (nom latin et nom commun) seulement si tu peux la reconnaître, niveau de confiance honnête, cases occupées (uniquement des cases existantes de la grille), hauteur estimée, et recommandation (« conserver » pour un sujet sain et intéressant, « a_evaluer » en cas de doute).
+- Décris le style et l'ambiance du jardin, les zones d'ombre et de lumière observées (en cases), et ce qui se voit au premier plan et au fond depuis la vue principale.
+- N'invente rien : ce qui n'est pas visible n'est pas décrit ; signale les incertitudes dans les remarques.
+- Tu ne fournis aucune coordonnée en dehors des cases de la grille.
+Réponds en français.`;
+
+/** Analyse validée, résumée pour la palette et l'intention (sans les images). */
+export function texteAnalyse(a: AnalyseValidee | null): string {
+  if (!a) return "";
+  const existants = a.existants.length === 0 ? "aucun" : a.existants.map((e) =>
+    `- ${e.nature}${e.espece_probable ? ` (${e.espece_probable})` : ""}, cases ${e.cases.join(" ")}${e.hauteur_estimee_m ? `, ${e.hauteur_estimee_m} m` : ""} : ${e.recommandation === "conserver" ? "conservé" : "à évaluer"} — ${e.description}`).join("\n");
+  const zones = (z: { cases: string[]; description: string }[]) => z.length === 0 ? "aucune" : z.map((x) => `${x.cases.join(" ")} (${x.description})`).join(" ; ");
+  return `<analyse_du_site validee_par_le_paysagiste="oui">
+Existant (zones d'exclusion du placement) :
+${existants}
+Style existant : ${a.style_existant}
+Ambiance : ${a.ambiance}
+Ombre observée : ${zones(a.ombre_lumiere.ombre)}
+Lumière observée : ${zones(a.ombre_lumiere.lumiere)}
+Premier plan depuis la vue principale : ${a.premier_plan}
+Fond depuis la vue principale : ${a.fond}
+</analyse_du_site>
+
+`;
+}
+
+export async function genererAnalyse(params: {
+  brief: Brief;
+  contexte: Contexte;
+  grille: Grille;
+  casesMassif: string[];
+  images: { plan: string; vues: { nom: string; principale: boolean; image: string }[] };
+}): Promise<ResultatIA<Analyse>> {
+  if (process.env.COMPOSITION_IA === "simule") return analyseSimulee(params.casesMassif);
+  const { brief, contexte, grille, images } = params;
+  const contenu: Anthropic.Beta.BetaContentBlockParam[] = [
+    { type: "text", text: `Image 1 — le plan vu de dessus : orthophoto, contour du massif en orange, plantes existantes du projet, caméras des vues avec leur cône de vision et leur nom, grille de repères étiquetée. ${decrireGrille(grille)}` },
+    { type: "image", source: { type: "base64", media_type: "image/jpeg", data: images.plan } },
+  ];
+  images.vues.forEach((v, i) => {
+    contenu.push(
+      { type: "text", text: `Image ${i + 2} — photo de la vue « ${v.nom} »${v.principale ? " (vue principale : elle définit le devant et le fond du massif)" : ""}, avec le contour du massif et la même grille projetés au sol.` },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: v.image } },
+    );
+  });
+  contenu.push({ type: "text", text: `<brief>\n${texteBrief(brief)}\n</brief>\n\n<contexte>\n${texteContexte(contexte)}\n</contexte>\n\nAnalyse le site selon les règles, en situant chaque élément dans les cases de la grille.` });
+  return appelerStructure(schemaAnalyse, SYSTEME_ANALYSE, contenu);
+}
+
+function analyseSimulee(casesMassif: string[]): ResultatIA<Analyse> {
+  const milieu = casesMassif[Math.floor(casesMassif.length / 2)] ?? "A1";
+  const premiere = casesMassif[0] ?? "A1";
+  return {
+    modele: "simule",
+    cout: 0.0156,
+    donnees: schemaAnalyse.parse({
+      existants: [
+        { nature: "topiaire", description: "Boule taillée au centre du massif", espece_probable: "Buxus sempervirens (buis)", confiance: "moyenne", cases: [milieu], hauteur_estimee_m: 0.8, recommandation: "conserver" },
+        { nature: "arbuste", description: "Arbuste isolé à l'angle", espece_probable: null, confiance: "faible", cases: [premiere], hauteur_estimee_m: 1.5, recommandation: "a_evaluer" },
+      ],
+      style_existant: "Jardin de pavillon, pelouse et quelques sujets taillés (simulation)",
+      ambiance: "Calme, ouverte",
+      ombre_lumiere: { ombre: [{ cases: [premiere], description: "ombre de l'arbuste en fin de journée" }], lumiere: [{ cases: [milieu], description: "plein soleil l'après-midi" }] },
+      premier_plan: "Pelouse et bord avant du massif",
+      fond: "Clôture et haie du voisin",
+      remarques: "Analyse simulée pour les tests.",
+    }),
+  };
+}
+
 // ─── Appel 1 : palette ─────────────────────────────────────────────────
 
-export async function genererPalette(brief: Brief, contexte: Contexte, bibliotheque: PlanteBibliotheque[]): Promise<ResultatIA<Palette>> {
+export async function genererPalette(brief: Brief, contexte: Contexte, bibliotheque: PlanteBibliotheque[], analyse: AnalyseValidee | null = null): Promise<ResultatIA<Palette>> {
   const brute = process.env.COMPOSITION_IA === "simule"
     ? paletteSimulee(brief, bibliotheque)
     : await appelerStructure(schemaPalette, SYSTEME_PALETTE,
-      `<brief>\n${texteBrief(brief)}\n</brief>\n\n<contexte>\n${texteContexte(contexte)}\n</contexte>\n\n<bibliotheque>\n${texteBibliotheque(bibliotheque)}\n</bibliotheque>`);
+      `<brief>\n${texteBrief(brief)}\n</brief>\n\n<contexte>\n${texteContexte(contexte)}\n</contexte>\n\n${texteAnalyse(analyse)}<bibliotheque>\n${texteBibliotheque(bibliotheque)}\n</bibliotheque>`);
   return { ...brute, donnees: nettoyerPalette(brute.donnees, bibliotheque) };
 }
 
 // ─── Appel 2 : intention ───────────────────────────────────────────────
 
-export async function genererIntention(brief: Brief, contexte: Contexte, palette: PlanteBibliotheque[]): Promise<ResultatIA<Intention>> {
+export async function genererIntention(brief: Brief, contexte: Contexte, palette: PlanteBibliotheque[], analyse: AnalyseValidee | null = null): Promise<ResultatIA<Intention>> {
   const brute = process.env.COMPOSITION_IA === "simule"
     ? intentionSimulee(brief, contexte, palette)
     : await appelerStructure(schemaIntention, SYSTEME_INTENTION,
-      `<brief>\n${texteBrief(brief)}\n</brief>\n\n<contexte>\n${texteContexte(contexte)}\n</contexte>\n\n<palette_validee>\n${texteBibliotheque(palette)}\n</palette_validee>`);
+      `<brief>\n${texteBrief(brief)}\n</brief>\n\n<contexte>\n${texteContexte(contexte)}\n</contexte>\n\n${texteAnalyse(analyse)}<palette_validee>\n${texteBibliotheque(palette)}\n</palette_validee>`);
   // Plantes hors palette ignorées, quantités au moins 1
   const ids = new Set(palette.map((p) => p.id));
   return {

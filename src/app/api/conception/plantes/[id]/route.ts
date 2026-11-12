@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supprimerDossier } from "@/modules/conception/serveur/stockage";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
 
 export async function PATCH(
@@ -36,6 +37,8 @@ export async function DELETE(
     const { data: plante } = await supabase.from("plantes").select("image_face_path, image_dessus_path").eq("id", id).single();
     const paths = [plante?.image_face_path, plante?.image_dessus_path].filter(Boolean) as string[];
     if (paths.length > 0) await supabase.storage.from("conception").remove(paths);
+    // Autres fichiers de la plante (symbole, régénérations)
+    await supprimerDossier(supabase, `plantes/${id}`);
 
     const { error } = await supabase.from("plantes").delete().eq("id", id);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

@@ -136,3 +136,72 @@ export const schemaIntention = z.object({
   explication: z.string().describe("Intention de composition en quelques phrases, pour le client"),
 });
 export type Intention = z.infer<typeof schemaIntention>;
+
+// ─── Analyse des vues photo calées (sortie de l'IA, avant la palette) ─────
+
+export const NATURES_EXISTANT = [
+  "arbre", "arbuste", "topiaire", "haie", "massif", "graminee", "couvre_sol", "grimpante",
+  "pelouse", "statue", "mur", "bordure", "dallage", "mobilier", "autre",
+] as const;
+export type NatureExistant = (typeof NATURES_EXISTANT)[number];
+
+/** Natures végétales (pouvant être ajoutées au plan comme végétal existant). */
+export const NATURES_VEGETALES: NatureExistant[] = ["arbre", "arbuste", "topiaire", "haie", "massif", "graminee", "couvre_sol", "grimpante"];
+
+export const schemaElementExistant = z.object({
+  nature: z.enum(NATURES_EXISTANT),
+  description: z.string().describe("Ce que l'on voit, en quelques mots"),
+  espece_probable: z.string().nullable().describe("Nom latin et nom commun probables, ou null si non identifiable"),
+  confiance: z.enum(["faible", "moyenne", "elevee"]),
+  cases: z.array(z.string()).describe("Cases de la grille occupées (ex. « C4 »), d'après le plan et les photos"),
+  hauteur_estimee_m: z.number().nullable(),
+  recommandation: z.enum(["conserver", "a_evaluer"]),
+});
+export type ElementExistant = z.infer<typeof schemaElementExistant>;
+
+const schemaZoneLumiere = z.object({ cases: z.array(z.string()), description: z.string() });
+
+export const schemaAnalyse = z.object({
+  existants: z.array(schemaElementExistant),
+  style_existant: z.string().describe("Style du jardin existant"),
+  ambiance: z.string(),
+  ombre_lumiere: z.object({
+    ombre: z.array(schemaZoneLumiere).describe("Zones d'ombre observées sur les photos"),
+    lumiere: z.array(schemaZoneLumiere).describe("Zones ensoleillées observées sur les photos"),
+  }),
+  premier_plan: z.string().describe("Ce qui se voit en premier plan depuis la vue principale"),
+  fond: z.string().describe("Ce qui se voit en fond depuis la vue principale"),
+  remarques: z.string().describe("Incertitudes, éléments non visibles, limites de l'analyse"),
+});
+export type Analyse = z.infer<typeof schemaAnalyse>;
+
+/** Analyse validée par le paysagiste : existant corrigé, chaque élément peut être ajouté au plan. */
+export const schemaAnalyseValidee = schemaAnalyse.extend({
+  existants: z.array(schemaElementExistant.extend({
+    ajouterAuPlan: z.boolean(),
+  })),
+});
+export type AnalyseValidee = z.infer<typeof schemaAnalyseValidee>;
+
+export const schemaGrille = z.object({
+  xMin: z.number(), yMax: z.number(), pas: z.number().positive(),
+  colonnes: z.number().int().positive().max(200), lignes: z.number().int().positive().max(200),
+});
+
+/** Image JPEG en base64 (sans préfixe data:), 3 Mo au plus. */
+const imageBase64 = z.string().min(100).max(4_000_000).regex(/^[A-Za-z0-9+/=]+$/);
+
+export const schemaDemandeAnalyse = z.object({
+  zoneId: z.string().min(1),
+  brief: schemaBrief,
+  contexte: schemaContexte,
+  empreinte: z.string().min(8).max(64),
+  grille: schemaGrille,
+  casesMassif: z.array(z.string()).max(2000),
+  refaire: z.boolean(),
+  images: z.object({
+    plan: imageBase64,
+    vues: z.array(z.object({ nom: z.string().max(120), principale: z.boolean(), image: imageBase64 })).min(1).max(2),
+  }).nullable(),
+});
+export type DemandeAnalyse = z.infer<typeof schemaDemandeAnalyse>;

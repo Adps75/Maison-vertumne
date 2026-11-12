@@ -47,6 +47,34 @@ export function directionVisee(cap: number, inclinaison: number): THREE.Vector3 
   return dir;
 }
 
+/** Projecteur d'une vue : caméra construite une seule fois, puis projection de nombreux points. */
+export type Projecteur = (pointPlan: [number, number], hauteurPoint: number) => { u: number; v: number } | null;
+
+/**
+ * Crée un projecteur pour une vue calée : point du plan (et hauteur absolue Three.js)
+ * → coordonnées normalisées 0–1 dans l'image ; null si le point est derrière la caméra.
+ */
+export function creerProjecteur(
+  params: CameraParams,
+  altitudeEn: (x: number, y: number) => number,
+  largeurPx: number,
+  hauteurPx: number,
+): Projecteur {
+  const { position, quaternion, fov } = cameraParamsVersThree(params, altitudeEn);
+  const camera = new THREE.PerspectiveCamera(fov, largeurPx / hauteurPx, 0.1, 1000);
+  camera.position.copy(position);
+  camera.quaternion.copy(quaternion);
+  camera.updateMatrixWorld();
+  camera.updateProjectionMatrix();
+  const point = new THREE.Vector3();
+  return (pointPlan, hauteurPoint) => {
+    const [px, , pz] = planVers3D(pointPlan[0], pointPlan[1]);
+    point.set(px, hauteurPoint, pz).project(camera);
+    if (point.z > 1) return null; // derrière la caméra
+    return { u: (point.x + 1) / 2, v: (1 - point.y) / 2 };
+  };
+}
+
 /**
  * Projette un point 3D du plan dans l'image (coordonnées normalisées 0–1).
  * Retourne null si le point est derrière la caméra.
@@ -59,27 +87,7 @@ export function projetterDansImage(
   largeurPx: number,
   hauteurPx: number,
 ): { u: number; v: number } | null {
-  const { position, quaternion, fov } = cameraParamsVersThree(params, altitudeEn);
-
-  const camera = new THREE.PerspectiveCamera(fov, largeurPx / hauteurPx, 0.1, 1000);
-  camera.position.copy(position);
-  camera.quaternion.copy(quaternion);
-  camera.updateMatrixWorld();
-  camera.updateProjectionMatrix();
-
-  const [px, , pz] = planVers3D(pointPlan[0], pointPlan[1]);
-  const point = new THREE.Vector3(px, hauteurPoint, pz);
-
-  // Projeter
-  const projected = point.project(camera);
-
-  // Derrière la caméra
-  if (projected.z > 1) return null;
-
-  return {
-    u: (projected.x + 1) / 2,
-    v: (1 - projected.y) / 2,
-  };
+  return creerProjecteur(params, altitudeEn, largeurPx, hauteurPx)(pointPlan, hauteurPoint);
 }
 
 /**

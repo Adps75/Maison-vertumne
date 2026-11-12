@@ -250,4 +250,14 @@ describe("preparerDonneesScene", () => {
     const result = preparerDonneesScene(projetBase, []);
     expect(result.zoneContour).toBeNull();
   });
+
+  it("un végétal existant (présent sur les photos) n'est jamais rendu en 3D ni dans le Visuel", () => {
+    const vegetal = (id: string, statut: Element["statut"]) => creerElement({
+      id, type: "vegetal", statut, calque: statut === "existant" ? "existant" : "vegetal",
+      geometrie: { type: "point", position: [20, 10] },
+      proprietes: { plante_id: "p1", version: "v", hauteur_m: 1, diametre_m: 1, nom_commun: "If" },
+    });
+    const d = preparerDonneesScene(projetBase, [vegetal("nouveau", "nouveau"), vegetal("existant", "existant"), vegetal("conserve", "conserve")]);
+    expect(d.vegetaux.map((v) => v.id).sort()).toEqual(["conserve", "nouveau"]);
+  });
 });

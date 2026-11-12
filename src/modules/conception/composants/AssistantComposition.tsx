@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CONTEXTE_CLIMATIQUE_DEFAUT, LIBELLES_STYLES, SAISONS, STYLES,
-  type Brief, type Contexte, type FichePlante, type Intention, type Palette,
+  CONTEXTE_CLIMATIQUE_DEFAUT, LIBELLES_STYLES, SAISONS, STYLES, NATURES_EXISTANT, NATURES_VEGETALES,
+  type Brief, type Contexte, type FichePlante, type Intention, type Palette, type AnalyseValidee, type NatureExistant,
 } from "../composition/schemas";
 import type { PlanteComposee } from "../composition/application";
+import { lireCase, etiquette, type Grille } from "../composition/grille";
 
 export interface ContourComposition {
   id: string;
@@ -18,6 +19,19 @@ export interface CompositionPrete {
   brief: Brief;
   intention: Intention;
   plantes: PlanteComposee[];
+  /** Analyse validée : l'existant conservé devient zone d'exclusion du placement. */
+  analyse: AnalyseValidee;
+  grille: Grille;
+}
+
+/** Données d'analyse préparées par la page pour un contour. */
+export interface PreparationAnalyse {
+  grille: Grille;
+  casesMassif: string[];
+  empreinte: string;
+  /** Vues calées qui voient le massif (2 au plus, la principale d'abord). */
+  vues: { nom: string; principale: boolean }[];
+  genererImages: () => Promise<{ plan: string; vues: { nom: string; principale: boolean; image: string }[] }>;
 }
 
 interface PlanteBiblio extends PlanteComposee {
@@ -33,6 +47,8 @@ interface Props {
   contours: ContourComposition[];
   contourParDefaut: string | null;
   calculerContexte: (contourId: string) => Contexte | null;
+  preparerAnalyse: (contourId: string) => PreparationAnalyse | null;
+  onAnalyseValidee: (analyse: AnalyseValidee, grille: Grille, contourId: string) => void;
   onComposer: (c: CompositionPrete) => void;
   onFermer: () => void;
 }
@@ -59,17 +75,31 @@ const BRIEF_DEFAUT: Brief = {
   contexteClimatique: CONTEXTE_CLIMATIQUE_DEFAUT,
 };
 
-const champ = "w-full border border-hair-light rounded px-2 py-1.5 bg-paper text-ink text-[0.8rem]";
+const LIBELLES_NATURES: Record<NatureExistant, string> = {
+  arbre: "Arbre", arbuste: "Arbuste", topiaire: "Topiaire", haie: "Haie", massif: "Massif", graminee: "Graminée",
+  couvre_sol: "Couvre-sol", grimpante: "Grimpante", pelouse: "Pelouse", statue: "Statue", mur: "Mur",
+  bordure: "Bordure", dallage: "Dallage", mobilier: "Mobilier", autre: "Autre",
+};
+const LIBELLES_CONFIANCE = { faible: "confiance faible", moyenne: "confiance moyenne", elevee: "confiance élevée" } as const;
+
+const champBase = "border border-hair-light rounded px-2 py-1.5 bg-paper text-ink text-[0.8rem]";
+const champ = `w-full ${champBase}`;
 const bouton = "bg-brass hover:bg-brass-soft text-paper rounded px-4 py-2 text-[0.8rem] disabled:opacity-50 disabled:cursor-not-allowed";
 const boutonSecondaire = "border border-hair-light hover:bg-paper-2 rounded px-3 py-1.5 text-[0.75rem]";
 
-export function AssistantComposition({ projetId, contours, contourParDefaut, calculerContexte, onComposer, onFermer }: Props) {
-  const [etape, setEtape] = useState<"brief" | "palette">("brief");
+export function AssistantComposition({ projetId, contours, contourParDefaut, calculerContexte, preparerAnalyse, onAnalyseValidee, onComposer, onFermer }: Props) {
+  const [etape, setEtape] = useState<"brief" | "analyse" | "palette">("brief");
+  const [analyse, setAnalyse] = useState<AnalyseValidee | null>(null);
+  const [analyseReutilisee, setAnalyseReutilisee] = useState(false);
+  const [grille, setGrille] = useState<Grille | null>(null);
+  const [nouvelElement, setNouvelElement] = useState<{ nature: NatureExistant; espece: string; cases: string }>({ nature: "arbuste", espece: "", cases: "" });
   const [contourId, setContourId] = useState<string>(contourParDefaut ?? contours[0]?.id ?? "");
   const [brief, setBrief] = useState<Brief>(BRIEF_DEFAUT);
   const [couleursTexte, setCouleursTexte] = useState("");
   const [enCours, setEnCours] = useState<string | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreurBrute] = useState<{ message: string; action?: { libelle: string; faire: () => void } } | null>(null);
+  const setErreur = (message: string | null, action?: { libelle: string; faire: () => void }) =>
+    setErreurBrute(message ? { message, action } : null);
 
   const [compositionId, setCompositionId] = useState<string | null>(null);
   const [palette, setPalette] = useState<Palette | null>(null);
@@ -79,6 +109,8 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
   const [ajouts, setAjouts] = useState<{ fiche: FichePlante & { raison: string; incertitude: string | null }; actif: boolean; etat: EtatAjout; idCree?: string; erreur?: string }[]>([]);
 
   const contexte = useMemo(() => (contourId ? calculerContexte(contourId) : null), [contourId, calculerContexte]);
+  const preparation = useMemo(() => (contourId ? preparerAnalyse(contourId) : null), [contourId, preparerAnalyse]);
+  const sansVue = !!preparation && preparation.vues.length === 0;
 
   const chargerBibliotheque = useCallback(async () => {
     const r = await fetch("/api/conception/plantes").then((x) => x.json()).catch(() => null);
@@ -94,21 +126,93 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
   const parId = useMemo(() => new Map(bibliotheque.map((p) => [p.id, p])), [bibliotheque]);
   const majBrief = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
 
-  // ─── Étape 1 → 2 : palette ───────────────────────────────────────────
-  const proposerPalette = async () => {
-    if (!contexte) return;
+  // ─── Étape 1 → 2 : analyse des vues calées ──────────────────────────
+  const analyser = async (refaire: boolean) => {
+    if (!contexte || !preparation) return;
+    if (preparation.vues.length === 0) { setErreur("Calez d'abord au moins une vue qui montre le massif."); return; }
+    setErreur(null);
+    const corps = { ...brief, couleurs: couleursTexte.split(",").map((c) => c.trim()).filter(Boolean) };
+    const demande = (images: Awaited<ReturnType<PreparationAnalyse["genererImages"]>> | null) => fetch(`/api/conception/projets/${projetId}/compositions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        zoneId: contourId, brief: corps, contexte, empreinte: preparation.empreinte,
+        grille: preparation.grille, casesMassif: preparation.casesMassif, refaire, images,
+      }),
+    }).then(async (x) => ({ statut: x.status, ...(await x.json().catch(() => ({ ok: false, error: `Réponse illisible du serveur (${x.status}).` }))) }));
+    try {
+      setEnCours("Recherche d'une analyse enregistrée…");
+      let r = refaire ? { statut: 200, ok: false, code: "images_requises" } : await demande(null);
+      // Pas d'analyse réutilisable : préparer les images, puis un seul nouvel envoi
+      if (!r.ok && r.code === "images_requises") {
+        setEnCours("Préparation du plan et des vues…");
+        const images = await preparation.genererImages();
+        setEnCours("L'IA analyse le plan et les photos…");
+        r = await demande(images);
+      }
+      if (!r.ok) throw new Error(r.error ?? "L'analyse a échoué.");
+      setBrief(corps);
+      setCompositionId(r.compositionId);
+      setGrille(preparation.grille);
+      setAnalyseReutilisee(!!r.reutilisee);
+      // Analyse brute : les végétaux à conserver sont proposés pour le plan
+      setAnalyse({
+        ...r.analyse_existant,
+        existants: r.analyse_existant.existants.map((e: AnalyseValidee["existants"][number]) => ({
+          ...e,
+          ajouterAuPlan: e.ajouterAuPlan ?? (NATURES_VEGETALES.includes(e.nature) && e.recommandation === "conserver"),
+        })),
+      });
+      setEtape("analyse");
+    } catch (e) {
+      setErreur(e instanceof Error ? e.message : "L'analyse a échoué.");
+    } finally {
+      setEnCours(null);
+    }
+  };
+
+  const majExistant = (i: number, patch: Partial<AnalyseValidee["existants"][number]>) =>
+    setAnalyse((a) => (a ? { ...a, existants: a.existants.map((e, j) => (j === i ? { ...e, ...patch } : e)) } : a));
+
+  /** Cases saisies (« C4, D4 ») normalisées ; celles hors grille sont écartées. */
+  const lireCases = (texte: string) => {
+    if (!grille) return [];
+    const sortie: string[] = [];
+    for (const c of texte.split(/[\s,;]+/)) {
+      const lu = lireCase(grille, c);
+      if (lu) { const e = etiquette(lu.colonne, lu.ligne); if (!sortie.includes(e)) sortie.push(e); }
+    }
+    return sortie;
+  };
+
+  const ajouterElement = () => {
+    const cases = lireCases(nouvelElement.cases);
+    if (!analyse || cases.length === 0) { setErreur("Indiquez au moins une case valide de la grille (ex. C4)."); return; }
+    setErreur(null);
+    setAnalyse({
+      ...analyse,
+      existants: [...analyse.existants, {
+        nature: nouvelElement.nature, description: "Ajouté par le paysagiste", espece_probable: nouvelElement.espece.trim() || null,
+        confiance: "elevee", cases, hauteur_estimee_m: null, recommandation: "conserver",
+        ajouterAuPlan: NATURES_VEGETALES.includes(nouvelElement.nature),
+      }],
+    });
+    setNouvelElement({ nature: "arbuste", espece: "", cases: "" });
+  };
+
+  // ─── Étape 2 → 3 : analyse validée, puis palette ─────────────────────
+  const demanderPalette = async () => {
+    if (!compositionId) return;
     setErreur(null);
     setEnCours("L'IA compose la palette végétale…");
     try {
-      const corps = { ...brief, couleurs: couleursTexte.split(",").map((c) => c.trim()).filter(Boolean) };
-      const r = await fetch(`/api/conception/projets/${projetId}/compositions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ zoneId: contourId, brief: corps, contexte }),
-      }).then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
-      if (!r.ok) throw new Error(r.error ?? "La proposition a échoué.");
-      setBrief(corps);
-      setCompositionId(r.compositionId);
+      const r = await fetch(`/api/conception/projets/${projetId}/compositions/${compositionId}/palette`, { method: "POST" })
+        .then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
+      if (!r.ok) {
+        if (r.code === "analyse_non_validee") setErreur(r.error, { libelle: "Revenir à l'analyse", faire: () => { setEtape("analyse"); setErreur(null); } });
+        else setErreur(r.error ?? "La proposition de palette a échoué.");
+        return;
+      }
       setPalette(r.palette);
       setRetenues(r.palette.retenues.map((x: { plante_id: string; raison: string }) => ({ id: x.plante_id, raison: x.raison, actif: true })));
       setAjouts(r.palette.ajouts.map((f: FichePlante & { raison: string; incertitude: string | null }) => ({ fiche: f, actif: true, etat: "attente" as EtatAjout })));
@@ -119,6 +223,21 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
     } finally {
       setEnCours(null);
     }
+  };
+
+  const validerAnalyse = async () => {
+    if (!compositionId || !analyse || !grille) return;
+    setErreur(null);
+    setEnCours("Enregistrement de l'analyse…");
+    const r = await fetch(`/api/conception/projets/${projetId}/compositions/${compositionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ analyse_existant: analyse }),
+    }).then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
+    setEnCours(null);
+    if (!r.ok) { setErreur(r.error ?? "Enregistrement impossible."); return; }
+    onAnalyseValidee(analyse, grille, contourId);
+    await demanderPalette();
   };
 
   // ─── Ajout à la bibliothèque, plante par plante ──────────────────────
@@ -164,6 +283,22 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
     return ids;
   }, [retenues, ajouts]);
 
+  /** Régénère les images des plantes indiquées (fonction existante, référence de style). */
+  const regenererImages = async (plantes: { id: string; nom: string }[]) => {
+    setErreur(null);
+    for (const pl of plantes) {
+      setEnCours(`Génération des images : ${pl.nom}…`);
+      const r = await fetch(`/api/conception/plantes/${pl.id}/generer`, { method: "POST" }).then((x) => x.json()).catch(() => ({ ok: false }));
+      if (!r.ok) {
+        setEnCours(null);
+        setErreur(`Les images de ${pl.nom} n'ont pas pu être générées : ${r.error ?? "erreur inconnue"}.`, { libelle: "Réessayer", faire: () => regenererImages(plantes) });
+        return;
+      }
+    }
+    setEnCours(null);
+    await chargerBibliotheque();
+  };
+
   const ajoutsEnAttente = ajouts.filter((a) => a.actif && a.etat !== "prete").length;
   const sansImages = idsFinaux.filter((id) => { const p = parId.get(id); return !p || !p.face_url || !p.dessus_url; });
   const peutComposer = idsFinaux.length > 0 && ajoutsEnAttente === 0 && sansImages.length === 0;
@@ -179,13 +314,24 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plantes: idsFinaux }),
       }).then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
-      if (!r.ok) throw new Error(r.error ?? "L'intention a échoué.");
+      if (!r.ok) {
+        if (r.code === "images_manquantes") {
+          setErreur(`${r.error} Régénérer ?`, { libelle: "Régénérer les images", faire: () => regenererImages(r.plantes) });
+        } else if (r.code === "plantes_absentes") {
+          setErreur(r.error, { libelle: "Retirer de la palette", faire: () => { setRetenues((l) => l.map((x) => (r.plantes.includes(x.id) ? { ...x, actif: false } : x))); setErreur(null); } });
+        } else {
+          setErreur(r.error ?? "L'intention de composition a échoué.");
+        }
+        return;
+      }
       onComposer({
         compositionId,
         contourId,
         brief,
         intention: r.intention,
         plantes: idsFinaux.map((id) => parId.get(id)!).filter(Boolean),
+        analyse: analyse!,
+        grille: grille!,
       });
     } catch (e) {
       setErreur(e instanceof Error ? e.message : "L'intention a échoué.");
@@ -201,8 +347,9 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
           <h2 className="font-medium">Composer avec l&apos;IA</h2>
           <ol className="flex gap-3 text-[0.75rem] text-stone">
             <li className={etape === "brief" ? "text-ink font-medium" : ""}>1 · Brief</li>
-            <li className={etape === "palette" ? "text-ink font-medium" : ""}>2 · Palette</li>
-            <li>3 · Composition</li>
+            <li className={etape === "analyse" ? "text-ink font-medium" : ""}>2 · Analyse</li>
+            <li className={etape === "palette" ? "text-ink font-medium" : ""}>3 · Palette</li>
+            <li>4 · Composition</li>
           </ol>
           <button onClick={onFermer} className="ml-auto text-stone hover:text-ink" aria-label="Fermer" data-testid="btn-fermer-composition">×</button>
         </div>
@@ -317,6 +464,66 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
             </div>
           )}
 
+          {etape === "analyse" && analyse && grille && (
+            <div className="space-y-4" data-testid="etape-analyse">
+              {analyseReutilisee && (
+                <p className="rounded bg-paper-2 px-3 py-2 text-[0.75rem]" data-testid="analyse-reutilisee">
+                  Analyse enregistrée réutilisée : le contour, les vues calées et l&apos;existant n&apos;ont pas changé.
+                </p>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[0.78rem]">
+                <p><strong>Style existant :</strong> {analyse.style_existant}</p>
+                <p><strong>Ambiance :</strong> {analyse.ambiance}</p>
+                <p><strong>Premier plan :</strong> {analyse.premier_plan}</p>
+                <p><strong>Fond :</strong> {analyse.fond}</p>
+                <p><strong>Ombre :</strong> {analyse.ombre_lumiere.ombre.map((z) => `${z.cases.join(" ")} (${z.description})`).join(" ; ") || "aucune observée"}</p>
+                <p><strong>Lumière :</strong> {analyse.ombre_lumiere.lumiere.map((z) => `${z.cases.join(" ")} (${z.description})`).join(" ; ") || "—"}</p>
+              </div>
+              {analyse.remarques && <p className="text-stone text-[0.75rem]">{analyse.remarques}</p>}
+
+              <h3 className="font-medium">Existant identifié</h3>
+              <p className="text-stone text-[0.72rem]">Les éléments de cette liste sont conservés : le placement évite leurs cases. Corrigez l&apos;espèce, retirez ou ajoutez un élément.</p>
+              <ul className="space-y-2">
+                {analyse.existants.map((e, i) => (
+                  <li key={i} className="rounded border border-hair-light p-2 grid grid-cols-1 md:grid-cols-[130px_1fr_150px_auto] gap-2 items-center" data-testid="existant">
+                    <select className={champ} value={e.nature} onChange={(ev) => majExistant(i, { nature: ev.target.value as NatureExistant })} aria-label="Nature">
+                      {NATURES_EXISTANT.map((n) => <option key={n} value={n}>{LIBELLES_NATURES[n]}</option>)}
+                    </select>
+                    <div className="min-w-0">
+                      <input className={champ} value={e.espece_probable ?? ""} placeholder="Espèce (inconnue)"
+                        onChange={(ev) => majExistant(i, { espece_probable: ev.target.value || null })} data-testid="existant-espece" aria-label="Espèce" />
+                      <p className="text-[0.7rem] text-stone mt-0.5 truncate">
+                        {e.description} · {LIBELLES_CONFIANCE[e.confiance]} · {e.recommandation === "conserver" ? "à conserver" : "à évaluer"}
+                        {e.hauteur_estimee_m ? ` · ≈ ${String(e.hauteur_estimee_m).replace(".", ",")} m` : ""}
+                      </p>
+                    </div>
+                    <input className={champ} defaultValue={e.cases.join(" ")} aria-label="Cases"
+                      onBlur={(ev) => { const c = lireCases(ev.target.value); if (c.length > 0) majExistant(i, { cases: c }); else ev.target.value = e.cases.join(" "); }} />
+                    <div className="flex items-center gap-2 text-[0.72rem]">
+                      {NATURES_VEGETALES.includes(e.nature) && (
+                        <label className="flex items-center gap-1 whitespace-nowrap">
+                          <input type="checkbox" checked={e.ajouterAuPlan} onChange={(ev) => majExistant(i, { ajouterAuPlan: ev.target.checked })} data-testid="existant-ajouter-plan" />
+                          Ajouter au plan
+                        </label>
+                      )}
+                      <button className={boutonSecondaire} onClick={() => setAnalyse({ ...analyse, existants: analyse.existants.filter((_, j) => j !== i) })} data-testid="existant-retirer">
+                        Retirer
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap items-end gap-2 rounded border border-dashed border-hair-light p-2" data-testid="existant-nouveau">
+                <select className={champBase} value={nouvelElement.nature} onChange={(e) => setNouvelElement({ ...nouvelElement, nature: e.target.value as NatureExistant })} aria-label="Nature du nouvel élément">
+                  {NATURES_EXISTANT.map((n) => <option key={n} value={n}>{LIBELLES_NATURES[n]}</option>)}
+                </select>
+                <input className={`${champBase} w-48`} placeholder="Espèce (facultatif)" value={nouvelElement.espece} onChange={(e) => setNouvelElement({ ...nouvelElement, espece: e.target.value })} aria-label="Espèce du nouvel élément" />
+                <input className={`${champBase} w-36`} placeholder="Cases (ex. C4 D4)" value={nouvelElement.cases} onChange={(e) => setNouvelElement({ ...nouvelElement, cases: e.target.value })} aria-label="Cases du nouvel élément" data-testid="existant-nouveau-cases" />
+                <button className={boutonSecondaire} onClick={ajouterElement} data-testid="existant-ajouter">Ajouter un élément</button>
+              </div>
+            </div>
+          )}
+
           {etape === "palette" && palette && (
             <div className="space-y-4" data-testid="etape-palette">
               {palette.remarques && <p className="text-stone">{palette.remarques}</p>}
@@ -326,8 +533,8 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
                   const p = parId.get(r.id);
                   return (
                     <li key={`${r.id}-${i}`} className={`flex gap-3 rounded border border-hair-light p-2 ${r.actif ? "" : "opacity-50"}`} data-testid="palette-retenue">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       {p?.face_url
+                        // eslint-disable-next-line @next/next/no-img-element
                         ? <img src={`/api/conception/plantes/${p.id}/image/face?v=${encodeURIComponent(p.updated_at ?? "")}`} alt="" className="w-12 h-12 object-contain shrink-0" />
                         : <div className="w-12 h-12 bg-paper-2 shrink-0" />}
                       <div className="flex-1 min-w-0">
@@ -384,24 +591,66 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
             </div>
           )}
 
-          {enCours && <p className="mt-4 text-stone" aria-live="polite" data-testid="composition-en-cours">… {enCours}</p>}
-          {erreur && <p className="mt-4 text-red-700" role="alert" data-testid="erreur-composition">{erreur}</p>}
+
+
         </div>
 
         <div className="flex items-center gap-3 px-5 py-3 border-t border-hair-light">
+          {etape === "analyse" && (
+            <>
+              <button className={boutonSecondaire} onClick={() => setEtape("brief")} disabled={enCours !== null}>← Brief</button>
+              <button className={boutonSecondaire} onClick={() => analyser(true)} disabled={enCours !== null} data-testid="btn-refaire-analyse">Refaire l&apos;analyse</button>
+            </>
+          )}
           {etape === "palette" && (
-            <button className={boutonSecondaire} onClick={() => setEtape("brief")} disabled={enCours !== null}>← Brief</button>
+            <>
+              <button className={boutonSecondaire} onClick={() => setEtape("analyse")} disabled={enCours !== null}>← Analyse</button>
+              <button className={boutonSecondaire} onClick={demanderPalette} disabled={enCours !== null} data-testid="btn-nouvelle-palette">Nouvelle palette</button>
+            </>
           )}
           <div className="flex-1 text-[0.72rem] text-stone">
-            {etape === "palette" && !peutComposer && (
+            {erreur ? (
+              <span className="flex flex-wrap items-center gap-2 text-red-700" role="alert" data-testid="erreur-composition">
+                <span>{erreur.message}</span>
+                {erreur.action && (
+                  <button className={boutonSecondaire} onClick={erreur.action.faire} disabled={enCours !== null} data-testid="btn-action-erreur">
+                    {erreur.action.libelle}
+                  </button>
+                )}
+              </span>
+            ) : enCours ? (
+              <span aria-live="polite" data-testid="composition-en-cours">… {enCours}</span>
+            ) : null}
+            {!erreur && !enCours && etape === "brief" && sansVue && (
+              <span className="text-red-700" data-testid="message-sans-vue">Calez d&apos;abord au moins une vue qui montre le massif.</span>
+            )}
+            {!erreur && !enCours && etape === "brief" && preparation && !sansVue && (
+              <span>Vues analysées : {preparation.vues.map((v) => v.nom + (v.principale ? " (principale)" : "")).join(", ")}</span>
+            )}
+            {!erreur && !enCours && etape === "palette" && !peutComposer && (
               ajoutsEnAttente > 0 ? "Ajoutez d'abord les nouvelles plantes à la bibliothèque (ou retirez-les)."
-                : sansImages.length > 0 ? "Certaines plantes n'ont pas encore leurs images."
+                : sansImages.length > 0 ? (
+                  <span className="flex flex-wrap items-center gap-2 text-red-700" data-testid="message-sans-images">
+                    {(() => {
+                      const noms = sansImages.map((id) => parId.get(id)?.nom_commun ?? "Une plante");
+                      return `${noms.join(", ")} ${noms.length > 1 ? "n'ont" : "n'a"} pas d'image. Régénérer ?`;
+                    })()}
+                    <button className={boutonSecondaire} data-testid="btn-regenerer-images"
+                      onClick={() => regenererImages(sansImages.filter((id) => parId.has(id)).map((id) => ({ id, nom: parId.get(id)!.nom_commun })))}>
+                      Régénérer les images
+                    </button>
+                  </span>
+                )
                   : idsFinaux.length === 0 ? "Retenez au moins une plante." : ""
             )}
           </div>
           {etape === "brief" ? (
-            <button className={bouton} onClick={proposerPalette} disabled={!contexte || enCours !== null} data-testid="btn-proposer-palette">
-              Proposer une palette
+            <button className={bouton} onClick={() => analyser(false)} disabled={!contexte || !preparation || sansVue || enCours !== null} data-testid="btn-analyser">
+              Analyser les vues
+            </button>
+          ) : etape === "analyse" ? (
+            <button className={bouton} onClick={validerAnalyse} disabled={enCours !== null} data-testid="btn-valider-analyse">
+              Valider l&apos;analyse
             </button>
           ) : (
             <button className={bouton} onClick={composer} disabled={!peutComposer || enCours !== null} data-testid="btn-composer">

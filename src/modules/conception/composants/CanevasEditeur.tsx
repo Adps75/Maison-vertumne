@@ -475,6 +475,34 @@ export function CanevasEditeur({
               const halfD = diam / 2;
               const rotation = (el.proprietes?.rotation as number) ?? 0;
 
+              // Végétal existant (présent sur les photos) : cercle pointillé et nom, sur le plan uniquement
+              if (el.statut === "existant") {
+                const nom = (el.proprietes?.nom_commun as string) || (el.proprietes?.nom_latin as string) || "Existant";
+                return (
+                  <Group key={el.id} opacity={opaciteDrag}>
+                    <Circle
+                      x={ec.x}
+                      y={ec.y}
+                      radius={halfD}
+                      fill={calqueColor + "33"}
+                      stroke={calqueColor}
+                      strokeWidth={strokeW}
+                      strokeScaleEnabled={false}
+                      dash={[6 / zoom, 4 / zoom]}
+                    />
+                    <Text
+                      x={ec.x}
+                      y={ec.y}
+                      text={nom}
+                      fontSize={11 / zoom}
+                      fill="#1A271F"
+                      offsetX={(nom.length * 3) / zoom}
+                      offsetY={6 / zoom}
+                    />
+                  </Group>
+                );
+              }
+
               return (
                 <Group key={el.id} opacity={opaciteDrag}>
                   {plantImg && plantImg.complete && plantImg.naturalWidth > 0 ? (

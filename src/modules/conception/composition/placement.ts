@@ -16,6 +16,8 @@
 import { pointDansPolygone, projectionSurSegment, type Pt } from "../geo/plan";
 import { ecartementMinimal, type VoisineInfo } from "../vegetaux/ecartement";
 import { creerAleatoire } from "./aleatoire";
+import { dansExclusion } from "./exclusions";
+import type { RectPlan } from "./grille";
 import type { Profondeur, Role } from "./schemas";
 
 export interface PlanteAPlacer {
@@ -43,6 +45,8 @@ export interface ParametresPlacement {
   /** Plantes déjà présentes (à respecter, non déplacées). */
   existantes: VoisineInfo[];
   graine: number;
+  /** Zones d'exclusion (cases occupées par l'existant conservé), en mètres plan. */
+  exclusions?: RectPlan[];
 }
 
 export interface Placement {
@@ -161,7 +165,7 @@ class Etat {
   placements: Placement[] = [];
   private n = 0;
 
-  constructor(private contour: Pt[], private tolerance: number, existantes: VoisineInfo[]) {
+  constructor(private contour: Pt[], private tolerance: number, existantes: VoisineInfo[], private exclusions: RectPlan[] = []) {
     this.voisines = [...existantes];
   }
 
@@ -170,6 +174,8 @@ class Etat {
     const pos = arrondi(brute);
     if (!pointDansPolygone(pos, this.contour)) return false;
     if (distanceAuBord(pos, this.contour) < margeBord(p.rayon)) return false;
+    // Zones d'exclusion : cases occupées par l'existant conservé + écartement
+    if (dansExclusion(pos, p.rayon, this.exclusions)) return false;
     const moi = info(p, pos, "?");
     for (const v of this.voisines) {
       const dMin = ecartementMinimal(moi, v, this.tolerance);
@@ -202,10 +208,10 @@ export function groupeImpair(n: number): number {
 }
 
 export function placerComposition(params: ParametresPlacement): ResultatPlacement {
-  const { contour, versDevant, geometrique, tolerance, existantes, graine } = params;
+  const { contour, versDevant, geometrique, tolerance, existantes, graine, exclusions } = params;
   const alea = creerAleatoire(graine);
   const r = repereMassif(contour, versDevant);
-  const etat = new Etat(contour, tolerance, existantes);
+  const etat = new Etat(contour, tolerance, existantes, exclusions);
   const largeur = r.lMax - r.lMin;
 
   // Hauteur relative de chaque plante dans sa bande (les plus hautes vers le fond)

@@ -5,8 +5,12 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { nettoyageApres } from "./outils/nettoyage";
 
 test.use({ storageState: "e2e/.auth/state.json" });
+
+// Données de test supprimées même si un test échoue (voir e2e/outils/nettoyage.ts)
+test.afterAll(nettoyageApres({ projets: "E2E-int3d-" }));
 
 let projetId: string | null = null;
 
@@ -30,17 +34,6 @@ async function creerProjet(page: import("@playwright/test").Page) {
   return page.url().match(/\/conception\/([a-f0-9-]+)/)?.[1] ?? null;
 }
 
-async function supprimerProjet(page: import("@playwright/test").Page) {
-  await page.goto("/conception");
-  await page.waitForTimeout(1000);
-  const btn = page.locator("text=Supprimer").first();
-  if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await btn.click();
-    await page.waitForTimeout(300);
-    await page.locator("text=Supprimer").last().click();
-    await page.waitForTimeout(1000);
-  }
-}
 
 async function canvasCentre(page: import("@playwright/test").Page) {
   const canvas = page.locator("canvas").first();
@@ -241,7 +234,4 @@ test.describe.serial("Intégration 3D", () => {
     expect(data.batiments).toBeGreaterThanOrEqual(1);
   });
 
-  test("cleanup", async ({ page }) => {
-    if (projetId) await supprimerProjet(page);
-  });
 });
