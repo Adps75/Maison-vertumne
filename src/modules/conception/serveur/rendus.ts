@@ -5,9 +5,10 @@ import { creerFournisseurImage } from "../ia";
 import { calculerCout } from "../config/style-plantes";
 import {
   decoder, decoderMasque, encoderMasquePng, encoderPng,
-  rendreDessinFiltre, rendreDessinIA, rendreRealiste, type Editeur,
+  rendreDessinIA, rendreRealiste, type Editeur,
 } from "../rendu/pipeline";
-import { BUCKET, cheminsRendu, type LigneRendu, type StyleRendu } from "./rendus-stockage";
+import { consigneRendu, consigneStyle } from "../rendu/styles";
+import { BUCKET, cheminsRendu, referencesActives, type DemandeGeneration, type LigneRendu } from "./rendus-stockage";
 
 async function telecharger(supabase: SupabaseClient, path: string): Promise<Buffer> {
   const { data, error } = await supabase.storage.from(BUCKET).download(path);
@@ -29,8 +30,8 @@ export class ErreurRendu extends Error {
 /** Éditeur branché sur le fournisseur configuré (FOURNISSEUR_IMAGE). */
 function editeurFournisseur(): Editeur {
   const fournisseur = creerFournisseurImage();
-  return async (consigne, imagePng, { masquePng, taille }) => {
-    const r = await fournisseur.editer(consigne, imagePng, { masque: masquePng, taille, qualite: "high" });
+  return async (consigne, imagePng, { masquePng, taille, references }) => {
+    const r = await fournisseur.editer(consigne, imagePng, { masque: masquePng, taille, qualite: "high", references });
     return { buffer: r.buffer, usage: r.usage };
   };
 }
@@ -43,28 +44,38 @@ export async function genererRendu(params: {
   supabase: SupabaseClient;
   projetId: string;
   pdv: { id: string; photo_path: string };
-  renduId: string;
-  style: StyleRendu;
+  demande: DemandeGeneration;
 }): Promise<LigneRendu> {
-  const { supabase, projetId, pdv, renduId, style } = params;
+  const { supabase, projetId, pdv, demande } = params;
+  const { renduId, style } = demande;
   const chemins = cheminsRendu(projetId, renduId);
 
   const photo = await decoder(await telecharger(supabase, pdv.photo_path));
   const couche = await decoder(await telecharger(supabase, chemins.couche));
 
+  // Références de style communes à l'atelier : les mêmes pour toutes les vues
+  const refs = await referencesActives(supabase, style);
+  const references = await Promise.all(refs.map((r) => telecharger(supabase, r.path)));
+  const consigne = consigneRendu({
+    style,
+    nbReferences: references.length,
+    annotations: demande.annotations,
+    plantesPrincipales: demande.plantesPrincipales,
+    materiaux: demande.materiaux,
+    consignesSup: demande.consignesSup,
+  });
+
   let resultat;
   if (style === "realiste") {
     const masqueScene = await decoderMasque(await telecharger(supabase, chemins.masqueScene));
     try {
-      resultat = await rendreRealiste({ photo, couche, masqueScene, editer: editeurFournisseur() });
+      resultat = await rendreRealiste({ photo, couche, masqueScene, editer: editeurFournisseur(), consigne, references });
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("Aucun végétal")) throw new ErreurRendu(e.message, 422);
       throw e;
     }
-  } else if (style === "dessin_ia") {
-    resultat = await rendreDessinIA({ photo, couche, editer: editeurFournisseur() });
   } else {
-    resultat = await rendreDessinFiltre({ photo, couche });
+    resultat = await rendreDessinIA({ photo, couche, editer: editeurFournisseur(), consigne, references });
   }
 
   await deposer(supabase, chemins.image, await encoderPng(resultat.image));
@@ -80,6 +91,12 @@ export async function genererRendu(params: {
       image_path: chemins.image,
       masque_path: resultat.masque ? chemins.masque : null,
       cout,
+      // Trace : consigne exacte, partie « style » commune aux vues, références utilisées
+      consigne,
+      consigne_style: consigneStyle(style, references.length),
+      references_utilisees: refs.map((r) => ({ id: r.id, path: r.path })),
+      consignes_sup: demande.consignesSup.trim() || null,
+      annotations: demande.annotations && style === "croquis",
     })
     .select()
     .single();

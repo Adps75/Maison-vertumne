@@ -22,6 +22,7 @@ import type { Pt } from "../geo/plan";
 import { surface as surfacePoly } from "../geo/plan";
 import { extrairePoignees, type Poignee } from "../editeur/poignees";
 import { deplacerGeometrie } from "../editeur/transformation";
+import { contourFerme, cotesExclus, materiauDe, type Materiau } from "../materiaux/materiaux";
 
 interface Batiment {
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
@@ -64,6 +65,8 @@ interface Props {
   pointsDeVue?: { id: string; nom: string; camera: { x: number; y: number; cap: number; fov_v: number }; statut: string }[];
   /** Callback quand on clique sur une caméra du plan. */
   onSelectPdv?: (id: string) => void;
+  /** Matériaux de l'atelier : rendu des tracés et surfaces qui en portent un. */
+  materiaux?: Materiau[];
 }
 
 const LAITON = "#9C7C3C";
@@ -103,7 +106,9 @@ export function CanevasEditeur({
   altRefPosition,
   pointsDeVue,
   onSelectPdv,
+  materiaux = [],
 }: Props) {
+  const materiauxParId = new Map(materiaux.map((m) => [m.id, m]));
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
   const [taille, setTaille] = useState({ w: 800, h: 600 });
@@ -113,6 +118,21 @@ export function CanevasEditeur({
   const plantImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+
+  // Tests (développement) : point du plan → coordonnées écran du navigateur
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__canevasTest = {
+      versEcran: (x: number, y: number) => {
+        const r = containerRef.current?.getBoundingClientRect();
+        if (!r) return null;
+        return [r.left + position.x + x * zoom, r.top + position.y - y * zoom];
+      },
+      zoom,
+    };
+    return () => { delete w.__canevasTest; };
+  }, [zoom, position]);
 
   // Couche interactive — redessinée via requestAnimationFrame
   const interactiveLayerRef = useRef<Konva.Layer>(null);
@@ -542,6 +562,8 @@ export function CanevasEditeur({
               );
             }
 
+            const materiau = materiauDe(el, materiauxParId);
+            if (materiau) return renderAvecMateriau(el, materiau, selected ? SELECTION : null, strokeW, zoom, opaciteDrag);
             return renderElement(el, color, strokeW, zoom, undefined, opaciteDrag);
           })}
 
@@ -969,6 +991,81 @@ export function CanevasEditeur({
         </Layer>
       </Stage>
     </div>
+  );
+}
+
+/** Motifs de remplissage (couleur et hachure du matériau), mis en cache. */
+const MOTIFS = new Map<string, HTMLCanvasElement>();
+function motifMateriau(m: Materiau): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  const cle = `${m.couleur}|${m.hachure}`;
+  const deja = MOTIFS.get(cle);
+  if (deja) return deja;
+  const c = document.createElement("canvas");
+  c.width = 10; c.height = 10;
+  const ctx = c.getContext("2d")!;
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = m.couleur;
+  ctx.fillRect(0, 0, 10, 10);
+  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = "#000000";
+  ctx.fillStyle = "#000000";
+  ctx.lineWidth = 0.8;
+  if (m.hachure === "diagonale" || m.hachure === "croisee") {
+    ctx.beginPath(); ctx.moveTo(0, 10); ctx.lineTo(10, 0); ctx.moveTo(-5, 5); ctx.lineTo(5, -5); ctx.moveTo(5, 15); ctx.lineTo(15, 5); ctx.stroke();
+  }
+  if (m.hachure === "croisee") {
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(10, 10); ctx.moveTo(-5, 5); ctx.lineTo(5, 15); ctx.moveTo(5, -5); ctx.lineTo(15, 5); ctx.stroke();
+  }
+  if (m.hachure === "points") {
+    ctx.beginPath(); ctx.arc(2.5, 2.5, 0.9, 0, 2 * Math.PI); ctx.arc(7.5, 7.5, 0.9, 0, 2 * Math.PI); ctx.fill();
+  }
+  MOTIFS.set(cle, c);
+  return c;
+}
+
+/**
+ * Élément portant un matériau : surface remplie à la couleur et la hachure du matériau ;
+ * linéaire en trait épais à sa couleur (largeur réelle, 3 px au moins) ; linéaire posé
+ * sur une surface : côtés inclus en trait plein, côtés exclus en pointillés.
+ */
+function renderAvecMateriau(el: Element, m: Materiau, couleurSelection: string | null, sw: number, zoom: number, opacity = 1): React.ReactNode {
+  const key = el.id;
+  const contour = contourFerme(el);
+  if (m.type === "surface" && contour) {
+    const pts = coordonneesVersEcran(contour);
+    const motif = motifMateriau(m);
+    return (
+      <Group key={key} opacity={opacity}>
+        <Line points={pts} closed stroke="rgba(0,0,0,0.35)" strokeWidth={sw + 2} strokeScaleEnabled={false} listening={false} />
+        <Line points={pts} closed stroke={couleurSelection ?? m.couleur} strokeWidth={sw} strokeScaleEnabled={false} listening={false}
+          {...(motif ? { fillPatternImage: motif as unknown as HTMLImageElement, fillPatternScale: { x: 1 / zoom, y: 1 / zoom }, fillPriority: "pattern" } : { fill: m.couleur + "66" })} />
+      </Group>
+    );
+  }
+  const epaisseur = Math.max(3, (m.largeur_m ?? 0) * zoom);
+  const exclus = new Set(cotesExclus(el));
+  const segments: { a: Pt; b: Pt; exclu: boolean }[] = [];
+  if (el.geometrie.type === "polyligne") {
+    const p = el.geometrie.points;
+    for (let i = 0; i < p.length - 1; i++) segments.push({ a: p[i], b: p[i + 1], exclu: false });
+  } else if (contour) {
+    for (let i = 0; i < contour.length; i++) segments.push({ a: contour[i], b: contour[(i + 1) % contour.length], exclu: exclus.has(i) });
+  }
+  return (
+    <Group key={key} opacity={opacity}>
+      {segments.map((s, i) => {
+        const pts = coordonneesVersEcran([s.a, s.b]);
+        return s.exclu ? (
+          <Line key={i} points={pts} stroke={couleurSelection ?? m.couleur} strokeWidth={1.5} dash={[6, 5]} strokeScaleEnabled={false} listening={false} />
+        ) : (
+          <Group key={i}>
+            <Line points={pts} stroke="rgba(0,0,0,0.35)" strokeWidth={epaisseur + 2} lineCap="round" strokeScaleEnabled={false} listening={false} />
+            <Line points={pts} stroke={couleurSelection ?? m.couleur} strokeWidth={epaisseur} lineCap="round" strokeScaleEnabled={false} listening={false} />
+          </Group>
+        );
+      })}
+    </Group>
   );
 }
 

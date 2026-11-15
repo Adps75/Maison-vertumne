@@ -7,6 +7,11 @@ export interface OptionsGeneration {
    * = zone à modifier. Le modèle s'en sert comme d'un guide (documentation OpenAI).
    */
   masque?: Buffer;
+  /**
+   * Images de référence de style, envoyées après l'image à éditer (champ image[]
+   * répété). Le masque ne s'applique qu'à la première image (documentation OpenAI).
+   */
+  references?: Buffer[];
 }
 
 export interface ResultatGeneration {

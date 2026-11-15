@@ -13,7 +13,6 @@ import { boiteEnglobante, fusionnerMasqueBrut, masqueFinal, masquePourApi } from
 import { recadrageAutour, tailleModele } from "./recadrage";
 import { recoller } from "./recollage";
 import { filtreDessin } from "./filtre-dessin";
-import { CONSIGNE_DESSIN_IA, CONSIGNE_REALISTE } from "./consignes";
 
 export interface UsageModele {
   input_tokens: number;
@@ -21,11 +20,14 @@ export interface UsageModele {
   input_tokens_details?: { text_tokens?: number; image_tokens?: number };
 }
 
-/** Appel d'édition au modèle d'image (fournisseur interchangeable). */
+/**
+ * Appel d'édition au modèle d'image (fournisseur interchangeable). L'image à éditer
+ * est la première ; les références de style suivent (le masque ne vaut que pour la première).
+ */
 export type Editeur = (
   consigne: string,
   imagePng: Buffer,
-  options: { masquePng?: Buffer; taille: string },
+  options: { masquePng?: Buffer; taille: string; references?: Buffer[] },
 ) => Promise<{ buffer: Buffer; usage: UsageModele }>;
 
 // ─── Conversions sharp ⇄ images brutes ─────────────────────────────────
@@ -95,6 +97,8 @@ export async function rendreRealiste(params: {
   couche: ImageRGBA;
   masqueScene: Masque;
   editer: Editeur;
+  consigne: string;
+  references?: Buffer[];
 }): Promise<ResultatRendu> {
   const { photo, editer } = params;
   const couche = await alignerSurPhoto(photo, params.couche);
@@ -111,9 +115,10 @@ export async function rendreRealiste(params: {
   const imageEnvoi = await redimensionner(extraireRect(vue, rect), taille.largeur, taille.hauteur);
   const masqueEnvoi = await redimensionnerMasque(extraireRectMasque(masque, rect), taille.largeur, taille.hauteur);
 
-  const reponse = await editer(CONSIGNE_REALISTE, await encoderPng(imageEnvoi), {
+  const reponse = await editer(params.consigne, await encoderPng(imageEnvoi), {
     masquePng: await encoderPng(masquePourApi(masqueEnvoi)),
     taille: `${taille.largeur}x${taille.hauteur}`,
+    references: params.references,
   });
 
   const resultat = await redimensionner(await decoder(reponse.buffer), rect.largeur, rect.hauteur);
@@ -126,15 +131,16 @@ export async function rendreDessinFiltre(params: { photo: ImageRGBA; couche: Ima
   return { image: filtreDessin(superposer(params.photo, couche)), masque: null, usage: null };
 }
 
-/** Dessin avec IA : stylisation de toute la vue, éléments et positions conservés. */
-export async function rendreDessinIA(params: { photo: ImageRGBA; couche: ImageRGBA; editer: Editeur }): Promise<ResultatRendu> {
+/** Style dessiné (croquis, aquarelle, feutres) : stylisation de toute la vue, éléments et positions conservés. */
+export async function rendreDessinIA(params: { photo: ImageRGBA; couche: ImageRGBA; editer: Editeur; consigne: string; references?: Buffer[] }): Promise<ResultatRendu> {
   const { photo, editer } = params;
   const couche = await alignerSurPhoto(photo, params.couche);
   const vue = superposer(photo, couche);
   const taille = tailleModele(photo.largeur, photo.hauteur);
   const envoi = await redimensionner(vue, taille.largeur, taille.hauteur);
-  const reponse = await editer(CONSIGNE_DESSIN_IA, await encoderPng(envoi), {
+  const reponse = await editer(params.consigne, await encoderPng(envoi), {
     taille: `${taille.largeur}x${taille.hauteur}`,
+    references: params.references,
   });
   const image = await redimensionner(await decoder(reponse.buffer), photo.largeur, photo.hauteur);
   return { image, masque: null, usage: reponse.usage, taille };

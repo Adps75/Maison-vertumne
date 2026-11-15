@@ -51,7 +51,14 @@ export class FournisseurOpenAI implements FournisseurImage {
       const form = new FormData();
       form.append("model", this.model);
       form.append("prompt", prompt);
-      form.append("image", new Blob([new Uint8Array(imageReference)], { type: "image/png" }), "reference.png");
+      const references = options?.references ?? [];
+      if (references.length === 0) {
+        form.append("image", new Blob([new Uint8Array(imageReference)], { type: "image/png" }), "reference.png");
+      } else {
+        // Plusieurs images : la première est éditée (et porte le masque), les suivantes sont des références
+        form.append("image[]", new Blob([new Uint8Array(imageReference)], { type: "image/png" }), "scene.png");
+        references.forEach((r, i) => form.append("image[]", new Blob([new Uint8Array(r)], { type: "image/png" }), `style-${i + 1}.png`));
+      }
       if (options?.masque) {
         form.append("mask", new Blob([new Uint8Array(options.masque)], { type: "image/png" }), "mask.png");
       }

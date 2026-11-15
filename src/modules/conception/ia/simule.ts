@@ -3,12 +3,21 @@ import "server-only";
 import sharp from "sharp";
 import type { FournisseurImage, OptionsGeneration, ResultatGeneration } from "./types";
 
-/** Consommation fictive renvoyée par le fournisseur simulé. */
+/** Consommation fictive renvoyée par le fournisseur simulé (une image d'entrée). */
 export const USAGE_SIMULE = {
   input_tokens: 1200,
   output_tokens: 4000,
   input_tokens_details: { text_tokens: 200, image_tokens: 1000 },
 };
+
+/** Jetons d'image fictifs par image de référence (les tests en déduisent le nombre d'images reçues). */
+export const JETONS_REFERENCE_SIMULE = 500;
+
+export function usageSimule(nbReferences: number) {
+  if (nbReferences === 0) return USAGE_SIMULE;
+  const image = USAGE_SIMULE.input_tokens_details.image_tokens + nbReferences * JETONS_REFERENCE_SIMULE;
+  return { ...USAGE_SIMULE, input_tokens: 200 + image, input_tokens_details: { text_tokens: 200, image_tokens: image } };
+}
 
 /**
  * Fournisseur d'image simulé (FOURNISSEUR_IMAGE=simule), pour les tests :
@@ -26,6 +35,6 @@ export class FournisseurSimule implements FournisseurImage {
   async editer(_prompt: string, imageReference: Buffer, options?: OptionsGeneration): Promise<ResultatGeneration> {
     const [l, h] = (options?.taille ?? "1024x1024").split("x").map(Number);
     const buffer = await sharp(imageReference).resize(l, h, { fit: "fill" }).negate({ alpha: false }).png().toBuffer();
-    return { buffer, usage: USAGE_SIMULE };
+    return { buffer, usage: usageSimule(options?.references?.length ?? 0) };
   }
 }

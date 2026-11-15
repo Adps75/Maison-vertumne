@@ -12,10 +12,17 @@ const USD_PAR_IMAGE_1024_HIGH = 0.211;
 const MAJORATION_ENTREE = 1.15;
 const USD_VERS_EUR = 0.92;
 
-/** Coût estimé en euros d'une édition à la taille donnée (qualité haute). */
-export function estimerCoutEdition(largeur: number, hauteur: number): number {
+/**
+ * Image de référence de style : entrée supplémentaire. Mesure réelle (gpt-image-2.5-flare,
+ * novembre 2026) : environ 800 jetons d'image par image d'entrée ; estimation prudente à
+ * 1 500 jetons, à 8 $ le million (tarif d'entrée image).
+ */
+const USD_PAR_REFERENCE = 1500 * 8 / 1_000_000;
+
+/** Coût estimé en euros d'une édition à la taille donnée (qualité haute), références comprises. */
+export function estimerCoutEdition(largeur: number, hauteur: number, nbReferences = 0): number {
   const pixels = largeur * hauteur;
-  const usd = USD_PAR_IMAGE_1024_HIGH * (pixels / (1024 * 1024)) * MAJORATION_ENTREE;
+  const usd = USD_PAR_IMAGE_1024_HIGH * (pixels / (1024 * 1024)) * MAJORATION_ENTREE + nbReferences * USD_PAR_REFERENCE;
   return Math.round(usd * USD_VERS_EUR * 100) / 100;
 }
 

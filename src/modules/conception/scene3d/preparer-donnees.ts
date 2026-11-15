@@ -7,6 +7,7 @@ import { cercleVersPolygone } from "../geo/plan";
 import { emprise3D, type Batiment3D } from "../geo/emprise3d";
 import type { Element } from "../types";
 import type { DonneesScene3D, Surface3D, Vegetal3D, PointCote3D, Masquant3D, FormeMasquant } from "./types";
+import { contoursMasqueMateriaux, materiauDe, type Materiau } from "../materiaux/materiaux";
 
 const FORMES_MASQUANT: FormeMasquant[] = ["cone", "boule", "colonne", "haie", "arbre"];
 
@@ -64,8 +65,10 @@ export function preparerDonneesScene(
   zoneId: string | null = null,
   couleursCalques?: Record<string, string>,
   altitudeEn?: ((x: number, y: number) => number) | null,
+  materiaux: Materiau[] = [],
 ): DonneesScene3D {
   const couleurs = { ...COULEURS_CALQUES, ...couleursCalques };
+  const materiauxParId = new Map(materiaux.map((m) => [m.id, m]));
 
   // 1. Déterminer les points de la zone
   const zonePoints = determinerZonePoints(elements, zoneId, projet);
@@ -109,10 +112,12 @@ export function preparerDonneesScene(
     if (el.type === "sol" || el.type === "mineral") {
       const points = extrairePointsSurface(el);
       if (points && pointsDansEmprise(points, emprise)) {
+        // Couleur du matériau de surface s'il y en a un, sinon celle du calque
+        const m = materiauDe(el, materiauxParId);
         surfaces.push({
           id: el.id,
           points,
-          couleur: couleurs[el.calque] ?? "#888888",
+          couleur: m?.type === "surface" ? m.couleur : couleurs[el.calque] ?? "#888888",
         });
       }
     } else if (el.type === "vegetal" && el.geometrie.type === "point" && el.statut === "existant") {
@@ -134,6 +139,7 @@ export function preparerDonneesScene(
             plante_id: planteId,
             version: version ?? "",
             imageUrl: `/api/conception/plantes/${planteId}/image/face?v=${encodeURIComponent(version ?? "")}`,
+            nom: (el.proprietes.nom_commun as string) || undefined,
             altitudeRelative: altitudeEn ? altitudeEn(pos[0], pos[1]) : 0,
           });
         }
@@ -149,6 +155,7 @@ export function preparerDonneesScene(
     surfaces,
     vegetaux,
     masquants,
+    contoursMateriaux: contoursMasqueMateriaux(elements, materiaux),
     altitudeEn: altitudeEn ?? null,
     pointsCotes,
     zoneContour,

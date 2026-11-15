@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { STYLES, MAX_REFERENCES, type StyleProjet, type StyleHistorique } from "../rendu/styles";
 
 /**
  * Rendus IA : partie légère (chemins, schémas, accès au point de vue, suppression).
@@ -11,11 +12,55 @@ import { z } from "zod";
 
 export const BUCKET = "conception";
 
-export const STYLES_RENDU = ["realiste", "dessin_filtre", "dessin_ia"] as const;
-export type StyleRendu = (typeof STYLES_RENDU)[number];
+/** Styles proposés (les anciens rendus « dessin_filtre » et « dessin_ia » restent listés). */
+export const STYLES_RENDU = STYLES;
+export type StyleRendu = StyleProjet;
 
-export const schemaPreparation = z.object({ style: z.enum(STYLES_RENDU) });
-export const schemaGeneration = z.object({ renduId: z.uuid(), style: z.enum(STYLES_RENDU) });
+export const schemaPreparation = z.object({ style: z.enum(STYLES) });
+
+/** Contexte propre à la vue, calculé par le navigateur (projection de la caméra calée). */
+const schemaMateriauDecrit = z.object({
+  nom: z.string().min(1).max(120),
+  description: z.string().max(600),
+  quantite: z.number().min(0).max(100000),
+  unite: z.enum(["m2", "ml"]),
+  position: z.string().max(120),
+});
+
+export const schemaGeneration = z.object({
+  renduId: z.uuid(),
+  style: z.enum(STYLES),
+  annotations: z.boolean().default(false),
+  consignesSup: z.string().max(500).default(""),
+  materiaux: z.array(schemaMateriauDecrit).max(40).default([]),
+  plantesPrincipales: z.array(z.string().min(1).max(80)).max(5).default([]),
+});
+export type DemandeGeneration = z.infer<typeof schemaGeneration>;
+
+/** Chemin de stockage d'une image de référence de style. */
+export function cheminReference(style: StyleProjet, id: string) {
+  return `styles/${style}/${id}.png`;
+}
+
+export interface ReferenceStyle {
+  id: string;
+  style: StyleProjet;
+  path: string;
+  actif: boolean;
+  created_at: string;
+}
+
+/** Références actives d'un style (les plus anciennes d'abord, MAX_REFERENCES au plus). */
+export async function referencesActives(supabase: SupabaseClient, style: StyleProjet): Promise<ReferenceStyle[]> {
+  const { data } = await supabase
+    .from("conception_styles_references")
+    .select("id, style, path, actif, created_at")
+    .eq("style", style)
+    .eq("actif", true)
+    .order("created_at")
+    .limit(MAX_REFERENCES);
+  return (data ?? []) as ReferenceStyle[];
+}
 
 /** Chemins de stockage d'un rendu (dérivés de l'id, jamais fournis par le client). */
 export function cheminsRendu(projetId: string, renduId: string) {
@@ -31,11 +76,16 @@ export function cheminsRendu(projetId: string, renduId: string) {
 export interface LigneRendu {
   id: string;
   point_de_vue_id: string;
-  style: StyleRendu;
+  style: StyleHistorique;
   image_path: string;
   masque_path: string | null;
   cout: number;
   created_at: string;
+  consigne?: string | null;
+  consigne_style?: string | null;
+  references_utilisees?: { id: string; path: string }[];
+  consignes_sup?: string | null;
+  annotations?: boolean;
 }
 
 /** Vérifie que le point de vue appartient au projet ; renvoie sa photo. */

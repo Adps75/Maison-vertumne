@@ -376,7 +376,8 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     // Régénérer, puis composer : la composition existante est signalée
     await page.locator("[data-testid='btn-regenerer-images']").click();
     await expect(page.locator("[data-testid='message-sans-images']")).toHaveCount(0, { timeout: 120_000 });
-    await expect(page.locator("[data-testid='btn-composer']")).toBeEnabled();
+    // Le bouton se réactive après le rechargement de la bibliothèque (parfois plus de 5 s)
+    await expect(page.locator("[data-testid='btn-composer']")).toBeEnabled({ timeout: 15_000 });
     await page.locator("[data-testid='btn-composer']").click();
     await expect(page.locator("[data-testid='message-composition-existante']")).toHaveText("Une composition existe déjà sur ce massif. La remplacer ?");
     await page.screenshot({ path: "e2e/screenshots/composition-existante.png" });

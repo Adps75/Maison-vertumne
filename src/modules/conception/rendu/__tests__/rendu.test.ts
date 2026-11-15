@@ -10,6 +10,7 @@ import { recoller } from "../recollage";
 import { filtreDessin } from "../filtre-dessin";
 import { estimerCoutEdition } from "../cout";
 import { rendreRealiste, rendreDessinIA, rendreDessinFiltre, decoder, encoderPng, type Editeur } from "../pipeline";
+import { consigneStyle } from "../styles";
 
 // ─── Scène synthétique ────────────────────────────────────────────────
 // Photo 400×300 : ciel en haut (y < 120), maison à gauche (x 20–140, y 60–200),
@@ -265,7 +266,7 @@ describe("chaîne de rendu avec fournisseur simulé", () => {
   it("réaliste : un appel, image et masque de même taille acceptée, hors masque identique", async () => {
     const editer = fournisseurSimule();
     const original = photo();
-    const r = await rendreRealiste({ photo: original, couche: couche(), masqueScene: masqueScene(), editer });
+    const r = await rendreRealiste({ photo: original, couche: couche(), masqueScene: masqueScene(), editer, consigne: consigneStyle("realiste", 0) });
 
     expect(editer).toHaveBeenCalledTimes(1);
     const [consigne, imagePng, options] = editer.mock.calls[0];
@@ -296,16 +297,19 @@ describe("chaîne de rendu avec fournisseur simulé", () => {
   it("réaliste : vue sans végétal ni massif → erreur explicite, aucun appel", async () => {
     const editer = fournisseurSimule();
     await expect(rendreRealiste({
-      photo: photo(), couche: creerImage(L, H), masqueScene: creerMasque(L, H), editer,
+      photo: photo(), couche: creerImage(L, H), masqueScene: creerMasque(L, H), editer, consigne: "x",
     })).rejects.toThrow(/Aucun végétal/);
     expect(editer).not.toHaveBeenCalled();
   });
 
-  it("dessin avec IA : toute la vue envoyée sans masque, résultat à pleine résolution", async () => {
+  it("style dessiné : toute la vue envoyée sans masque, avec la consigne et les références, résultat à pleine résolution", async () => {
     const editer = fournisseurSimule();
-    const r = await rendreDessinIA({ photo: photo(), couche: couche(), editer });
+    const ref = await sharp({ create: { width: 64, height: 48, channels: 3, background: "#aa8844" } }).png().toBuffer();
+    const r = await rendreDessinIA({ photo: photo(), couche: couche(), editer, consigne: "CONSIGNE", references: [ref] });
     expect(editer).toHaveBeenCalledTimes(1);
+    expect(editer.mock.calls[0][0]).toBe("CONSIGNE");
     expect(editer.mock.calls[0][2].masquePng).toBeUndefined();
+    expect(editer.mock.calls[0][2].references).toEqual([ref]);
     expect(r.image.largeur).toBe(L);
     expect(r.image.hauteur).toBe(H);
   });

@@ -10,11 +10,14 @@ import {
   cercleVersPolygone,
 } from "../geo/plan";
 import { FORMES_EXISTANT, LIBELLES_FORMES_EXISTANT, type FormeExistant } from "../composition/schemas";
+import { cotesExclus, materiauCompatible, materiauDe, quantiteElement, type Materiau } from "../materiaux/materiaux";
 
 interface Props {
   selection: Element[];
   /** Modification d'un élément (action annulable). */
   onModifier?: (el: Element) => void;
+  /** Matériaux de l'atelier (affectables aux tracés et surfaces). */
+  materiaux?: Materiau[];
 }
 
 /** Valeur numérique saisie (virgule acceptée), bornée ; null si invalide. */
@@ -23,7 +26,7 @@ function lireNombre(texte: string, min: number, max: number): number | null {
   return Number.isFinite(v) && v >= min && v <= max ? Math.round(v * 100) / 100 : null;
 }
 
-export function PanneauInfos({ selection, onModifier }: Props) {
+export function PanneauInfos({ selection, onModifier, materiaux = [] }: Props) {
   if (selection.length === 0) return null;
 
   const el = selection[0];
@@ -103,6 +106,48 @@ export function PanneauInfos({ selection, onModifier }: Props) {
               <dd className="text-ink">{el.hauteur} m</dd>
             </div>
           )}
+
+          {/* Matériau d'un tracé ou d'une surface */}
+          {onModifier && (el.type === "sol" || el.type === "mineral" || el.type === "limite") && materiaux.length > 0 && (() => {
+            const compatibles = materiaux.filter((m) => materiauCompatible(el, m));
+            if (compatibles.length === 0) return null;
+            const m = materiauDe(el, new Map(materiaux.map((x) => [x.id, x])));
+            const surContour = m?.type === "lineaire" && el.geometrie.type !== "polyligne";
+            const exclus = cotesExclus(el).length;
+            return (
+              <div className="pt-1 mt-1 border-t border-hair-light space-y-1" data-testid="proprietes-materiau">
+                <div className="flex justify-between items-center gap-2">
+                  <dt className="text-stone">Matériau</dt>
+                  <dd>
+                    <select className="border border-hair-light rounded px-1 py-0.5 text-[0.75rem] bg-white max-w-[8.5rem]" data-testid="select-materiau"
+                      value={m?.id ?? ""}
+                      onChange={(e) => {
+                        const proprietes = { ...el.proprietes };
+                        if (e.target.value) proprietes.materiau_id = e.target.value; else delete proprietes.materiau_id;
+                        onModifier({ ...el, proprietes });
+                      }}>
+                      <option value="">Aucun</option>
+                      {compatibles.map((x) => <option key={x.id} value={x.id}>{x.nom}</option>)}
+                    </select>
+                  </dd>
+                </div>
+                {m && (
+                  <div className="flex justify-between">
+                    <dt className="text-stone">Quantité</dt>
+                    <dd className="text-ink" data-testid="info-quantite-materiau">
+                      {quantiteElement(el, m).toLocaleString("fr-FR", { maximumFractionDigits: 2 })} {m.unite === "m2" ? "m²" : "ml"}
+                    </dd>
+                  </div>
+                )}
+                {surContour && el.geometrie.type !== "cercle" && (
+                  <p className="text-[0.7rem] text-stone" data-testid="aide-cotes">
+                    Cliquez un côté du contour sur le plan pour l&apos;exclure ou le réinclure
+                    {exclus > 0 ? ` (${exclus} exclu${exclus > 1 ? "s" : ""}, en pointillés)` : ""}.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Végétal existant : volume qui masque les plantes situées derrière (Visuel, rendu IA) */}
           {el.type === "vegetal" && el.statut === "existant" && onModifier && (

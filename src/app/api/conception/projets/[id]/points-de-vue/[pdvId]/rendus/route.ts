@@ -41,7 +41,7 @@ export async function POST(request: Request, { params }: { params: Params }) {
     const pdv = await chargerPointDeVue(supabase, id, pdvId);
     if (!pdv) return NextResponse.json({ ok: false, error: "Point de vue introuvable." }, { status: 404 });
 
-    const rendu = await genererRendu({ supabase, projetId: id, pdv, renduId: corps.data.renduId, style: corps.data.style });
+    const rendu = await genererRendu({ supabase, projetId: id, pdv, demande: corps.data });
     return NextResponse.json({ ok: true, rendu });
   } catch (e) {
     if (e instanceof ErreurNonAutorise) return NextResponse.json({ ok: false, error: e.message }, { status: e.status });

@@ -21,6 +21,8 @@ interface Options {
   projets?: string | string[];
   /** Plantes de test créées par la suite. */
   plantes?: (p: { nom_latin: string; nom_commun: string }) => boolean;
+  /** Images de référence de style déposées par la suite (effacées après les projets). */
+  referencesStyle?: () => string[];
 }
 
 export function nettoyageApres(options: Options): () => Promise<void> {
@@ -54,6 +56,11 @@ export function nettoyageApres(options: Options): () => Promise<void> {
           const d = await ctx.delete(`/api/conception/plantes/${p.id}`);
           if (!d.ok()) console.warn(`[nettoyage e2e] plante ${p.nom_latin} non supprimée (${d.status()})`);
         }
+      }
+      // Après les projets (et donc leurs rendus) : plus aucun rendu ne les utilise
+      for (const id of options.referencesStyle?.() ?? []) {
+        const d = await ctx.delete(`/api/conception/styles/references/${id}?definitif=1`);
+        if (!d.ok()) console.warn(`[nettoyage e2e] référence ${id} non effacée (${d.status()})`);
       }
     } catch (e) {
       console.warn("[nettoyage e2e] échec du nettoyage :", e instanceof Error ? e.message : e);

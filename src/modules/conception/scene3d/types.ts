@@ -27,6 +27,11 @@ export interface DonneesScene3D {
    * plantes du projet situées derrière eux (Visuel et rendu IA).
    */
   masquants: Masquant3D[];
+  /**
+   * Éléments portant un matériau (surfaces, bandes des linéaires) : ajoutés au masque
+   * du rendu réaliste, même hors du massif (ex. gazon rénové).
+   */
+  contoursMateriaux: Pt[][];
   /** Fonction altitude relative en un point du plan. Null si pas de relief. */
   altitudeEn: ((x: number, y: number) => number) | null;
   /** Points cotés (pour affichage dans le calage). */
@@ -79,6 +84,8 @@ export interface Vegetal3D {
   plante_id: string;
   /** Version (updated_at) pour le cache de l'image. */
   version: string;
+  /** Nom commun (annotations du croquis). */
+  nom?: string;
   /** URL pré-calculée de l'image de face. */
   imageUrl: string;
   /** Altitude relative au point de la plante (pour positionnement 3D). */

@@ -58,6 +58,11 @@ import {
   trouverPoignee,
   type Poignee,
 } from "@/modules/conception/editeur/poignees";
+import {
+  basculerCote, coteProche, cotesExclus, cotesApresInsertion, cotesApresSuppressionSommet, materiauDe, type Materiau,
+} from "@/modules/conception/materiaux/materiaux";
+import { STYLES, STYLE_DEFAUT, type StyleProjet } from "@/modules/conception/rendu/styles";
+import { PanneauMateriaux } from "@/modules/conception/composants/PanneauMateriaux";
 
 const CanevasEditeur = dynamic(
   () =>
@@ -135,6 +140,9 @@ export function PageProjetClient() {
   } | null>(null);
   const [reliefMessage, setReliefMessage] = useState<string | null>(null);
   const [tolerance, setTolerance] = useState(0.30);
+  // Matériaux de l'atelier et style de rendu du projet (le même pour toutes les vues)
+  const [materiaux, setMateriaux] = useState<Materiau[]>([]);
+  const [styleRendu, setStyleRendu] = useState<{ style: StyleProjet; annotations: boolean }>({ style: STYLE_DEFAUT, annotations: false });
 
   // Refs pour la couche interactive (pas de re-render React au mouvement)
   const curseurRef = useRef<Pt>([0, 0]);
@@ -201,6 +209,28 @@ export function PageProjetClient() {
     [etat.calqueActif, etat.elements.size],
   );
 
+  // Matériaux de l'atelier
+  useEffect(() => {
+    fetch("/api/conception/materiaux").then((r) => r.json())
+      .then((r) => { if (r?.ok) setMateriaux(r.materiaux); })
+      .catch(() => { /* sans matériaux : le plan reste utilisable */ });
+  }, []);
+
+  /** Style de rendu du projet : enregistré sur le projet, appliqué à toutes les vues. */
+  const changerStyleRendu = useCallback((style: StyleProjet, annotations: boolean) => {
+    setStyleRendu({ style, annotations });
+    fetch(`/api/conception/projets/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rendu_style: style, rendu_annotations: annotations }),
+    }).catch(() => {});
+  }, [id]);
+
+  /** Modification des matériaux (prix) : liste rechargée. */
+  const rechargerMateriaux = useCallback(() => {
+    fetch("/api/conception/materiaux").then((r) => r.json()).then((r) => { if (r?.ok) setMateriaux(r.materiaux); }).catch(() => {});
+  }, []);
+
   // Charger le projet et les éléments
   useEffect(() => {
     Promise.all([
@@ -215,6 +245,9 @@ export function PageProjetClient() {
           setAltRefNgf(projetData.projet.altitude_reference_ngf ?? null);
           if (typeof projetData.projet.tolerance_chevauchement === "number") {
             setTolerance(projetData.projet.tolerance_chevauchement);
+          }
+          if ((STYLES as readonly string[]).includes(projetData.projet.rendu_style)) {
+            setStyleRendu({ style: projetData.projet.rendu_style, annotations: !!projetData.projet.rendu_annotations });
           }
           // Charger la grille de relief si disponible
           if (projetData.projet.relief_url) {
@@ -325,6 +358,7 @@ export function PageProjetClient() {
         elements: etat.elements,
         etape: etat.etape,
         selection: etat.selection,
+        selectionner: (ids: string[]) => dispatch({ type: "SELECTIONNER", ids }),
       };
     }
     return () => {
@@ -472,6 +506,20 @@ export function PageProjetClient() {
           poigneePreviewRef.current = pt;
           return;
         }
+        // Matériau linéaire posé sur une surface : clic sur un côté = l'exclure / le réinclure
+        if (selectedEls.length === 1) {
+          const el = selectedEls[0];
+          const m = materiauDe(el, new Map(materiaux.map((x) => [x.id, x])));
+          if (m?.type === "lineaire") {
+            const cote = coteProche(el, pt, 8 / zoomRef.current);
+            if (cote !== null) {
+              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, proprietes: { ...el.proprietes, cotes_exclus: basculerCote(el, cote) } }] });
+              pointerDownPtRef.current = null;
+              pointerDownElementRef.current = null;
+              return;
+            }
+          }
+        }
       }
 
       // Tester si on est sur un élément sélectionnable (pour drag potentiel)
@@ -481,7 +529,7 @@ export function PageProjetClient() {
       pointerDownPtRef.current = pt;
       pointerDownElementRef.current = touche?.id ?? null;
     },
-    [etat.outil, etat.selection, etat.elements, etat.calques, etat.etape],
+    [etat.outil, etat.selection, etat.elements, etat.calques, etat.etape, materiaux],
   );
 
   // Clic sur le canevas
@@ -932,7 +980,12 @@ export function PageProjetClient() {
           } else {
             const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
             if (nouvelleGeom) {
-              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: nouvelleGeom }] });
+              // Sommet inséré au milieu d'un côté : côtés exclus d'un matériau linéaire renumérotés
+              const exclus = cotesExclus(el);
+              const proprietes = poigneeActive.type === "milieu" && exclus.length > 0 && (el.geometrie.type === "polygone" || el.geometrie.type === "rectangle")
+                ? { ...el.proprietes, cotes_exclus: cotesApresInsertion(exclus, poigneeActive.index) }
+                : el.proprietes;
+              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: nouvelleGeom, proprietes }] });
             }
           }
         }
@@ -1266,7 +1319,12 @@ export function PageProjetClient() {
           if (el) {
             const result = supprimerSommet(el.geometrie, sommetSelectionne.index);
             if (result) {
-              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: result }] });
+              // Côtés exclus d'un matériau linéaire : les deux côtés du sommet fusionnent
+              const exclus = cotesExclus(el);
+              const proprietes = exclus.length > 0 && (el.geometrie.type === "polygone" || el.geometrie.type === "rectangle")
+                ? { ...el.proprietes, cotes_exclus: cotesApresSuppressionSommet(exclus, sommetSelectionne.index, el.geometrie.points.length) }
+                : el.proprietes;
+              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: result, proprietes }] });
               setSommetSelectionne(null);
             }
           }
@@ -1426,9 +1484,9 @@ export function PageProjetClient() {
     const aRelief = grilleRelief || pointsCotes.length > 0;
     return preparerDonneesScene(
       projetPour3D, elementsArr, etat.zoneActive, undefined,
-      aRelief ? altitudeEn : null,
+      aRelief ? altitudeEn : null, materiaux,
     );
-  }, [afficher3D, projet, etat.elements, etat.zoneActive, grilleRelief, pointsCotes, altitudeEn]);
+  }, [afficher3D, projet, etat.elements, etat.zoneActive, grilleRelief, pointsCotes, altitudeEn, materiaux]);
 
   // Cadrage sur une zone (marge 10 %)
   const cadrerSurZone = useCallback(
@@ -1606,6 +1664,7 @@ export function PageProjetClient() {
       <div className="flex-1 relative overflow-hidden" data-testid="canevas-container" style={editeurMasque ? { display: "none" } : undefined}>
         {/* Éditeur 2D — visible à toutes les étapes */}
         <CanevasEditeur
+            materiaux={materiaux}
             parcelles={projet.parcelles_geojson}
             batiments={projet.batiments_geojson ?? []}
             orthoUrl={projet.ortho_url}
@@ -1666,8 +1725,11 @@ export function PageProjetClient() {
                 dispatch={dispatch}
               />
             )}
+            {etat.etape === 3 && (
+              <PanneauMateriaux materiaux={materiaux} elements={etat.elements} onPrixModifie={rechargerMateriaux} />
+            )}
 
-            <PanneauInfos selection={selectionElements} onModifier={(el) => dispatch({ type: "MODIFIER_ELEMENTS", elements: [el] })} />
+            <PanneauInfos selection={selectionElements} materiaux={materiaux} onModifier={(el) => dispatch({ type: "MODIFIER_ELEMENTS", elements: [el] })} />
 
             {etat.etape === 2 && (
               <PanneauZones
@@ -1943,6 +2005,10 @@ export function PageProjetClient() {
           selection={etat.selection}
           tolerance={tolerance}
           zoneContour={zoneContourActive}
+          materiaux={materiaux}
+          styleRendu={styleRendu.style}
+          annotationsRendu={styleRendu.annotations}
+          onChangerStyleRendu={changerStyleRendu}
         />
       )}
 

@@ -11,6 +11,8 @@ import { PanneauVegetaux3D } from "./PanneauVegetaux3D";
 import { PanneauProprietes3D } from "./PanneauProprietes3D";
 import { BoutonTraits, type ReglagesTraits } from "./TraitsConstructionControle";
 import { PanneauRenduIA } from "./PanneauRenduIA";
+import type { Materiau } from "../materiaux/materiaux";
+import type { StyleProjet } from "../rendu/styles";
 import { dessinerMention, telechargerCanvas } from "../rendu/mention";
 import type { CaptureurRendu } from "../scene3d/capture-rendu";
 
@@ -39,9 +41,18 @@ interface Props {
   reglagesTraits: ReglagesTraits;
   /** Ouvre l'assistant de composition IA. */
   onComposerIA?: () => void;
+  /** Matériaux de l'atelier (rendu IA : masque et consigne). */
+  materiaux: Materiau[];
+  /** Style de rendu du projet (le même pour toutes les vues). */
+  styleRendu: StyleProjet;
+  annotationsRendu: boolean;
+  onChangerStyleRendu: (style: StyleProjet, annotations: boolean) => void;
 }
 
-export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour, reglagesTraits, onComposerIA }: Props) {
+export function VueVisuel({
+  pdv, donnees, altitudeEn, onSaveSoleil, onClose, onCalage, dispatch, elements, selection, tolerance, zoneContour, reglagesTraits, onComposerIA,
+  materiaux, styleRendu, annotationsRendu, onChangerStyleRendu,
+}: Props) {
   const [soleil, setSoleil] = useState<SoleilParams>({ ...pdv.soleil });
   const [statutSoleil, setStatutSoleil] = useState<"idle" | "saving" | "saved">("idle");
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -194,7 +205,8 @@ export function VueVisuel({ pdv, donnees, altitudeEn, onSaveSoleil, onClose, onC
       {/* Zone principale */}
       <div className="flex-1 flex min-h-0 relative">
         {renduOuvert && (
-          <PanneauRenduIA pdv={pdv} captureRef={captureRef} onFermer={() => setRenduOuvert(false)} />
+          <PanneauRenduIA pdv={pdv} captureRef={captureRef} donnees={donnees} elements={elements} materiaux={materiaux} altitudeEn={altitudeEn}
+            style={styleRendu} annotations={annotationsRendu} onChangerStyle={onChangerStyleRendu} onFermer={() => setRenduOuvert(false)} />
         )}
         {/* Photo + scène superposée */}
         <div ref={parentRef} className="flex-1 relative bg-black overflow-hidden">

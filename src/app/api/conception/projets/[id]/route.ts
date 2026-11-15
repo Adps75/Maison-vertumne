@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supprimerDossier } from "@/modules/conception/serveur/stockage";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
+import { STYLES } from "@/modules/conception/rendu/styles";
 
 export async function GET(
   _request: Request,
@@ -63,6 +64,11 @@ export async function PATCH(
     if (typeof body.tolerance_chevauchement === "number") {
       updates.tolerance_chevauchement = Math.max(0, Math.min(0.4, body.tolerance_chevauchement));
     }
+    // Style de rendu du projet : le même pour toutes les vues
+    if (typeof body.rendu_style === "string" && (STYLES as readonly string[]).includes(body.rendu_style)) {
+      updates.rendu_style = body.rendu_style;
+    }
+    if (typeof body.rendu_annotations === "boolean") updates.rendu_annotations = body.rendu_annotations;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ ok: false, error: "Rien à mettre à jour." }, { status: 400 });

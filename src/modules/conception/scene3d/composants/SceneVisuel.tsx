@@ -390,14 +390,16 @@ function EnregistreurCapture({
   const { gl, scene, camera } = useThree();
 
   useEffect(() => {
-    // Massif : zone active, ou à défaut les surfaces dessinées
-    const contoursMassif = donnees.zoneContour
-      ? [donnees.zoneContour]
-      : donnees.surfaces.map((s) => s.points);
+    // Massif : zone active, ou à défaut les surfaces dessinées ; plus les éléments portant
+    // un matériau, même hors du massif (ex. gazon rénové, volige)
+    const contoursMassif = [
+      ...(donnees.zoneContour ? [donnees.zoneContour] : donnees.surfaces.map((s) => s.points)),
+      ...donnees.contoursMateriaux,
+    ];
     captureRef.current = (largeur, hauteur) =>
       capturerCouches({ gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn });
     return () => { captureRef.current = null; };
-  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, altitudeEn]);
+  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, donnees.contoursMateriaux, altitudeEn]);
 
   return null;
 }
