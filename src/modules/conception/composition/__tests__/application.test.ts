@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import type { Pt } from "../../geo/plan";
 import { placerComposition } from "../placement";
-import { plantesAPlacer, toleranceDensite, elementsComposition, plantesCompositionExistante, type PlanteComposee } from "../application";
+import {
+  plantesAPlacer, toleranceDensite, elementsComposition, plantesCompositionExistante, plantesAbsentes, messagePlantesAbsentes, type PlanteComposee,
+} from "../application";
 import type { Intention } from "../schemas";
 import type { Element } from "../../types";
 
@@ -12,21 +14,30 @@ const PLANTES: PlanteComposee[] = [
 
 const INTENTION: Intention = {
   plantes: [
-    { plante_id: "cornus", quantite: 3, role: "fond", profondeur: "fond", taille_groupe: 1, repetitions: 3 },
-    { plante_id: "salvia", quantite: 7, role: "masse", profondeur: "devant", taille_groupe: 4, repetitions: 2 },
-    { plante_id: "inconnue", quantite: 5, role: "masse", profondeur: "milieu", taille_groupe: 3, repetitions: 1 },
+    { plante_id: "cornus", role: "structure", part_surface: null, nombre: 3, profondeur: "fond", taille_groupe: 1, repetitions: 3 },
+    { plante_id: "salvia", role: "masse", part_surface: 100, nombre: null, profondeur: "devant", taille_groupe: 4, repetitions: 2 },
+    { plante_id: "inconnue", role: "masse", part_surface: 20, nombre: null, profondeur: "milieu", taille_groupe: 3, repetitions: 1 },
   ],
   geometrie: null,
   explication: "",
 };
 
 describe("application d'une composition", () => {
-  it("plantes à placer : rayon à 3 ans (ou 70 % adulte), groupe impair, plante inconnue ignorée", () => {
+  it("plantes à placer : rayon à 3 ans (ou 70 % adulte), groupe impair, nombre fixe ou part, plante inconnue ignorée", () => {
     const p = plantesAPlacer(INTENTION, PLANTES);
     expect(p.map((x) => x.cle)).toEqual(["cornus", "salvia"]);
+    expect(p[0]).toMatchObject({ nombre: 3, part: 0 });
+    expect(p[1]).toMatchObject({ nombre: null, part: 1 });
     expect(p[0].rayon).toBeCloseTo(0.5);
     expect(p[1].rayon).toBeCloseTo(0.175);
     expect(p[1].tailleGroupe).toBe(3);
+  });
+
+  it("plantes de la palette absentes de la bibliothèque, message clair", () => {
+    expect(plantesAbsentes(PLANTES, ["salvia"])).toEqual([PLANTES[0]]);
+    expect(plantesAbsentes(PLANTES, ["salvia", "cornus"])).toEqual([]);
+    expect(messagePlantesAbsentes([PLANTES[0]])).toBe("Cornouiller n'existe plus dans la bibliothèque : relancez la composition avec une palette à jour.");
+    expect(messagePlantesAbsentes(PLANTES)).toContain("Cornouiller, Sauge n'existent plus");
   });
 
   it("tolérance selon la densité, bornée", () => {
@@ -37,14 +48,15 @@ describe("application d'une composition", () => {
     expect(toleranceDensite(0.3, "standard")).toBe(0.3);
   });
 
-  it("éléments : une plante du plan par placement, quantités identiques, marqués par la composition", () => {
+  it("éléments : une plante du plan par placement, nombre fixe respecté, marqués par la composition", () => {
     const contour: Pt[] = [[0, 0], [8, 0], [8, 4], [0, 4]];
-    const r = placerComposition({ contour, plantes: plantesAPlacer(INTENTION, PLANTES), versDevant: [0, -1], geometrique: false, tolerance: 0.3, existantes: [], graine: 3 });
+    const r = placerComposition({ contour, plantes: plantesAPlacer(INTENTION, PLANTES), versDevant: [0, -1], geometrique: false, tolerance: 0.3, densite: "standard", existantes: [], graine: 3 });
     let n = 0;
     const els = elementsComposition({ placements: r.placements, plantes: PLANTES, compositionId: "c1", contourId: "z1", ordreBase: 10, genererId: () => `e${n++}` });
     expect(els.length).toBe(r.placements.length);
     expect(els.filter((e) => e.proprietes.plante_id === "cornus").length).toBe(3);
-    expect(els.filter((e) => e.proprietes.plante_id === "salvia").length).toBe(7);
+    expect(els.filter((e) => e.proprietes.plante_id === "salvia").length).toBe(r.placements.length - 3);
+    expect(r.couverture).toBeGreaterThanOrEqual(0.85);
     for (const e of els) {
       expect(e.type).toBe("vegetal");
       expect(e.calque).toBe("vegetal");

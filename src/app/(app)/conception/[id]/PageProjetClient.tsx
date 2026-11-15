@@ -1667,7 +1667,7 @@ export function PageProjetClient() {
               />
             )}
 
-            <PanneauInfos selection={selectionElements} />
+            <PanneauInfos selection={selectionElements} onModifier={(el) => dispatch({ type: "MODIFIER_ELEMENTS", elements: [el] })} />
 
             {etat.etape === 2 && (
               <PanneauZones

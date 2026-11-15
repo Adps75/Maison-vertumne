@@ -18,7 +18,7 @@ import {
   type Brief, type Contexte, type Palette, type Intention, type Analyse, type AnalyseValidee,
 } from "./schemas";
 import { decrireGrille, type Grille } from "./grille";
-import { coutAnthropic, nettoyerPalette, type PlanteBibliotheque } from "./controles";
+import { coutAnthropic, nettoyerPalette, nettoyerIntention, type PlanteBibliotheque } from "./controles";
 
 export type { PlanteBibliotheque } from "./controles";
 
@@ -123,13 +123,15 @@ Règles :
 Réponds en français.`;
 
 const SYSTEME_INTENTION = `Tu es paysagiste concepteur. Pour une palette validée, tu définis l'intention de composition d'un massif.
-Pour chaque plante : la quantité totale, le rôle (structure, fond, masse, ponctuation, bordure, couvre_sol), la profondeur (fond, milieu, devant), la taille des groupes (nombre impair : 1, 3, 5, 7…) et le nombre de répétitions (groupes répartis dans le massif).
+Pour chaque plante : le rôle (structure, fond, masse, ponctuation, bordure, couvre_sol), la profondeur (fond, milieu, devant), la taille des groupes (nombre impair : 1, 3, 5, 7…) et le nombre de répétitions (groupes répartis dans le massif).
+Tu ne donnes PAS de quantités totales : elles sont calculées à partir de la surface plantable, de la largeur à 3 ans et de la densité demandée, pour que tout le massif soit couvert à 3 ans.
+- Structure et ponctuation : donne le nombre de sujets (« nombre ») et mets « part_surface » à null.
+- Autres rôles : donne la part de la surface plantable en % (« part_surface ») et mets « nombre » à null. Les parts des autres rôles totalisent 100 %.
 Règles :
 - Les plus hautes au fond, les plus basses devant ; la bordure suit le bord avant.
-- Quantités cohérentes avec la surface, la largeur à 3 ans des plantes et la densité demandée (serrée, standard, aérée) : le massif doit être couvert à 3 ans sans surdensité.
 - Répétitions et rythmes plutôt que des sujets isolés, sauf ponctuations et sujets de structure.
 - Pour une structure géométrique, renseigne la symétrie et les motifs (par exemple sujets de structure en alignement régulier encadrant des masses fleuries) ; sinon mets « geometrie » à null.
-- Si une analyse du site est fournie : la profondeur suit la vue principale (premier plan et fond observés), les plantes d'ombre vont vers les zones d'ombre observées, et les sujets existants conservés occupent déjà leur place (les quantités tiennent compte de la surface qu'ils prennent).
+- Si une analyse du site est fournie : la profondeur suit la vue principale (premier plan et fond observés), les plantes d'ombre vont vers les zones d'ombre observées ; les sujets existants conservés occupent déjà leur place (leur emprise est retirée de la surface plantable) ; les surfaces à remplacer (pelouse, sol nu, gravier) sont entièrement plantées.
 - Tu ne fournis jamais de positions ni de coordonnées : un algorithme place les plantes selon ton intention.
 Réponds en français.`;
 
@@ -175,21 +177,29 @@ const SYSTEME_ANALYSE = `Tu es paysagiste concepteur. Tu analyses un jardin exis
 Les images partagent la même grille de repères : sur le plan, la grille est dessinée sur l'orthophoto ; sur chaque photo, la même grille est projetée au sol grâce au calage de la caméra, avec les mêmes étiquettes (lettres pour les colonnes, chiffres pour les lignes). Le contour orange est le massif à composer.
 Utilise ces correspondances pour situer chaque élément observé dans les cases de la grille.
 Règles :
-- Identifie l'existant visible dans le massif et à ses abords : arbres, arbustes, topiaires, haies, massifs, graminées, couvre-sols, grimpantes, statues, murs, bordures, dallages, mobilier.
-- Pour chaque élément : nature, espèce probable (nom latin et nom commun) seulement si tu peux la reconnaître, niveau de confiance honnête, cases occupées (uniquement des cases existantes de la grille), hauteur estimée, et recommandation (« conserver » pour un sujet sain et intéressant, « a_evaluer » en cas de doute).
+- Identifie l'existant visible dans le massif et à ses abords : arbres, arbustes, topiaires, haies, massifs, graminées, couvre-sols, grimpantes, statues, murs, bordures, dallages, mobilier, et les surfaces (pelouse, sol nu, gravier).
+- Distingue les objets des surfaces. Un objet (végétal, statue, mur, mobilier…) : recommandation « conserver » pour un sujet sain et intéressant, « a_evaluer » en cas de doute. Une surface (pelouse, sol nu, gravier) est ce que le massif remplace : recommandation toujours « remplacer », jamais « conserver ».
+- Pour chaque élément : nature, espèce probable (nom latin et nom commun) seulement si tu peux la reconnaître, niveau de confiance honnête, cases réellement occupées par son emprise au sol (uniquement des cases existantes de la grille, pas les cases voisines), hauteur estimée, et pour un végétal la forme de son volume (cône, boule, colonne, haie, arbre ; null pour une surface ou un objet).
 - Décris le style et l'ambiance du jardin, les zones d'ombre et de lumière observées (en cases), et ce qui se voit au premier plan et au fond depuis la vue principale.
 - N'invente rien : ce qui n'est pas visible n'est pas décrit ; signale les incertitudes dans les remarques.
 - Tu ne fournis aucune coordonnée en dehors des cases de la grille.
 Réponds en français.`;
 
+const DECISIONS: Record<AnalyseValidee["existants"][number]["recommandation"], string> = {
+  conserver: "conservé (emprise exclue du massif)",
+  supprimer: "supprimé (remplacé par le massif)",
+  remplacer: "surface remplacée par le massif",
+  a_evaluer: "à évaluer",
+};
+
 /** Analyse validée, résumée pour la palette et l'intention (sans les images). */
 export function texteAnalyse(a: AnalyseValidee | null): string {
   if (!a) return "";
   const existants = a.existants.length === 0 ? "aucun" : a.existants.map((e) =>
-    `- ${e.nature}${e.espece_probable ? ` (${e.espece_probable})` : ""}, cases ${e.cases.join(" ")}${e.hauteur_estimee_m ? `, ${e.hauteur_estimee_m} m` : ""} : ${e.recommandation === "conserver" ? "conservé" : "à évaluer"} — ${e.description}`).join("\n");
+    `- ${e.nature}${e.espece_probable ? ` (${e.espece_probable})` : ""}, cases ${e.cases.join(" ")}${e.hauteur_estimee_m ? `, ${e.hauteur_estimee_m} m` : ""} : ${DECISIONS[e.recommandation]} — ${e.description}`).join("\n");
   const zones = (z: { cases: string[]; description: string }[]) => z.length === 0 ? "aucune" : z.map((x) => `${x.cases.join(" ")} (${x.description})`).join(" ; ");
   return `<analyse_du_site validee_par_le_paysagiste="oui">
-Existant (zones d'exclusion du placement) :
+Existant (décisions du paysagiste) :
 ${existants}
 Style existant : ${a.style_existant}
 Ambiance : ${a.ambiance}
@@ -233,8 +243,10 @@ function analyseSimulee(casesMassif: string[]): ResultatIA<Analyse> {
     cout: 0.0156,
     donnees: schemaAnalyse.parse({
       existants: [
-        { nature: "topiaire", description: "Boule taillée au centre du massif", espece_probable: "Buxus sempervirens (buis)", confiance: "moyenne", cases: [milieu], hauteur_estimee_m: 0.8, recommandation: "conserver" },
-        { nature: "arbuste", description: "Arbuste isolé à l'angle", espece_probable: null, confiance: "faible", cases: [premiere], hauteur_estimee_m: 1.5, recommandation: "a_evaluer" },
+        { nature: "topiaire", description: "Boule taillée au centre du massif", espece_probable: "Buxus sempervirens (buis)", confiance: "moyenne", cases: [milieu], hauteur_estimee_m: 0.8, forme: "boule", recommandation: "conserver" },
+        { nature: "arbuste", description: "Arbuste isolé à l'angle", espece_probable: null, confiance: "faible", cases: [premiere], hauteur_estimee_m: 1.5, forme: null, recommandation: "a_evaluer" },
+        // Surface : l'IA peut se tromper de recommandation, la règle fixe la ramène à « remplacer »
+        { nature: "pelouse", description: "Pelouse sèche sur tout le massif", espece_probable: null, confiance: "elevee", cases: casesMassif.slice(0, 40), hauteur_estimee_m: null, forme: null, recommandation: "a_evaluer" },
       ],
       style_existant: "Jardin de pavillon, pelouse et quelques sujets taillés (simulation)",
       ambiance: "Calme, ouverte",
@@ -263,17 +275,7 @@ export async function genererIntention(brief: Brief, contexte: Contexte, palette
     ? intentionSimulee(brief, contexte, palette)
     : await appelerStructure(schemaIntention, SYSTEME_INTENTION,
       `<brief>\n${texteBrief(brief)}\n</brief>\n\n<contexte>\n${texteContexte(contexte)}\n</contexte>\n\n${texteAnalyse(analyse)}<palette_validee>\n${texteBibliotheque(palette)}\n</palette_validee>`);
-  // Plantes hors palette ignorées, quantités au moins 1
-  const ids = new Set(palette.map((p) => p.id));
-  return {
-    ...brute,
-    donnees: {
-      ...brute.donnees,
-      plantes: brute.donnees.plantes
-        .filter((p) => ids.has(p.plante_id))
-        .map((p) => ({ ...p, quantite: Math.max(1, p.quantite), repetitions: Math.max(1, p.repetitions) })),
-    },
-  };
+  return { ...brute, donnees: nettoyerIntention(brute.donnees, palette.map((p) => p.id)) };
 }
 
 // ─── Mode simulé (tests) ───────────────────────────────────────────────
@@ -311,15 +313,15 @@ function intentionSimulee(brief: Brief, contexte: Contexte, palette: PlanteBibli
     donnees: schemaIntention.parse({
       plantes: triees.map((p, i) => {
         const profondeur = i < n / 3 ? "fond" : i < (2 * n) / 3 ? "milieu" : "devant";
-        const rayon = (p.largeur_3ans_m ?? (p.largeur_adulte_m ?? 0.6) * 0.7) / 2;
-        const quantite = Math.max(1, Math.min(9, Math.round((contexte.surface_m2 / n) / (Math.PI * rayon * rayon * 2.5))));
+        const structure = i === 0 && brief.structure === "geometrique";
         return {
           plante_id: p.id,
-          quantite,
-          role: i === 0 && brief.structure === "geometrique" ? "structure" : profondeur === "fond" ? "fond" : "masse",
+          role: structure ? "structure" : profondeur === "fond" ? "fond" : "masse",
+          part_surface: structure ? null : Math.round(100 / (brief.structure === "geometrique" ? Math.max(1, n - 1) : n)),
+          nombre: structure ? 3 : null,
           profondeur,
-          taille_groupe: quantite >= 3 ? 3 : 1,
-          repetitions: Math.max(1, Math.ceil(quantite / 3)),
+          taille_groupe: 3,
+          repetitions: Math.max(1, Math.round(contexte.surface_m2 / (4 * n))),
         };
       }),
       geometrie: brief.structure === "geometrique" ? { symetrie: "gauche_droite", motifs: [] } : null,

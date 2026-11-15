@@ -42,6 +42,7 @@ export function BibliothequeClient() {
   const [generation, setGeneration] = useState<string | null>(null);
   const [doublon, setDoublon] = useState<{ id: string; nom_latin: string } | null>(null);
   const [iaEnCours, setIaEnCours] = useState(false);
+  const [refusSuppression, setRefusSuppression] = useState<string | null>(null);
   const [iaComplete, setIaComplete] = useState(false);
   const [menuOuvert, setMenuOuvert] = useState<string | null>(null);
   const [ficheOuverte, setFicheOuverte] = useState<Plante | null>(null);
@@ -112,7 +113,10 @@ export function BibliothequeClient() {
 
   const supprimer = async (id: string) => {
     if (!confirm("Supprimer cette plante et ses images ?")) return;
-    await fetch(`/api/conception/plantes/${id}`, { method: "DELETE" });
+    setRefusSuppression(null);
+    const r = await fetch(`/api/conception/plantes/${id}`, { method: "DELETE" }).then((x) => x.json()).catch(() => null);
+    // Plante utilisée dans un projet : suppression refusée, message avec les projets concernés
+    if (r && r.ok === false) setRefusSuppression(r.error ?? "La suppression a échoué.");
     charger();
   };
 
@@ -208,6 +212,13 @@ export function BibliothequeClient() {
           </form>
         </div>
       </header>
+
+      {refusSuppression && (
+        <div className="mx-6 mt-4 rounded border border-brass bg-paper-2 text-ink px-4 py-2.5 text-[0.82rem] flex items-start justify-between gap-4" role="alert" data-testid="refus-suppression">
+          <span>{refusSuppression}</span>
+          <button className="text-stone hover:text-ink" onClick={() => setRefusSuppression(null)} aria-label="Fermer">×</button>
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-6 py-6">
         {/* Filtres */}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
 import { genererPalette, erreurConfigurationIA, ErreurComposition, type PlanteBibliotheque } from "@/modules/conception/composition/ia";
-import { schemaBrief, schemaContexte, schemaAnalyseValidee } from "@/modules/conception/composition/schemas";
+import { schemaBrief, schemaContexte, schemaAnalyseValidee, existantsAEvaluer } from "@/modules/conception/composition/schemas";
 
 export const maxDuration = 300;
 
@@ -15,7 +15,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
       .select("id, brief, contexte, analyse_existant, analyse_validee, cout")
       .eq("id", compId).eq("projet_id", id).single();
     if (!compo) return NextResponse.json({ ok: false, code: "composition_introuvable", error: "Composition introuvable." }, { status: 404 });
-    if (!compo.analyse_validee) return NextResponse.json({ ok: false, code: "analyse_non_validee", error: "Validez d'abord l'analyse des vues." }, { status: 409 });
+    if (!compo.analyse_validee || (compo.analyse_existant && existantsAEvaluer(compo.analyse_existant) > 0)) {
+      return NextResponse.json({ ok: false, code: "analyse_non_validee", error: "Validez d'abord l'analyse des vues (chaque élément conservé ou supprimé)." }, { status: 409 });
+    }
     const erreurIA = erreurConfigurationIA();
     if (erreurIA) return NextResponse.json({ ok: false, code: "ia_non_configuree", error: erreurIA }, { status: 503 });
 

@@ -14,8 +14,11 @@ export async function GET(request: NextRequest) {
     const recherche = request.nextUrl.searchParams.get("q");
 
     const statut = request.nextUrl.searchParams.get("statut");
+    // Liste d'identifiants (vérification de la palette avant placement)
+    const ids = (request.nextUrl.searchParams.get("ids") ?? "").split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x));
     const lister = (colonnes: string) => {
       let query = supabase.from("plantes").select(colonnes).order("nom_commun");
+      if (ids.length > 0) query = query.in("id", ids);
       if (statut) query = query.eq("statut", statut);
       if (categorie) query = query.eq("categorie", categorie);
       if (recherche) query = query.or(`nom_commun.ilike.%${recherche}%,nom_latin.ilike.%${recherche}%`);

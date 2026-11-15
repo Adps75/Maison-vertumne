@@ -259,5 +259,25 @@ describe("preparerDonneesScene", () => {
     });
     const d = preparerDonneesScene(projetBase, [vegetal("nouveau", "nouveau"), vegetal("existant", "existant"), vegetal("conserve", "conserve")]);
     expect(d.vegetaux.map((v) => v.id).sort()).toEqual(["conserve", "nouveau"]);
+    // … mais devient un volume masquant (non dessiné) à sa hauteur et son diamètre
+    expect(d.masquants).toEqual([{
+      id: "existant", position: [20, 10], altitudeRelative: 0, forme: "boule", hauteur_m: 1, diametre_m: 1, longueur_m: 2, orientation_deg: 0,
+    }]);
+  });
+
+  it("volume masquant : forme choisie, ou arbre d'après la catégorie, altitude du pied", () => {
+    const existant = (id: string, proprietes: Record<string, unknown>) => creerElement({
+      id, type: "vegetal", statut: "existant", calque: "existant", hauteur: 4.5,
+      geometrie: { type: "point", position: [20, 10] }, proprietes: { diametre_m: 2, ...proprietes },
+    });
+    const d = preparerDonneesScene(projetBase, [
+      existant("if", { forme_existant: "cone", hauteur_m: 4.5 }),
+      existant("lilas", { categorie: "arbre" }),
+      existant("haie", { forme_existant: "haie", longueur_m: 6, orientation_deg: 90 }),
+    ], null, undefined, () => 1.5);
+    expect(d.masquants.map((m) => [m.id, m.forme, m.hauteur_m, m.altitudeRelative])).toEqual([
+      ["if", "cone", 4.5, 1.5], ["lilas", "arbre", 4.5, 1.5], ["haie", "haie", 4.5, 1.5],
+    ]);
+    expect(d.masquants[2]).toMatchObject({ longueur_m: 6, orientation_deg: 90 });
   });
 });

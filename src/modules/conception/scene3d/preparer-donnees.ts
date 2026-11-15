@@ -6,7 +6,30 @@ import type { Pt } from "../geo/plan";
 import { cercleVersPolygone } from "../geo/plan";
 import { emprise3D, type Batiment3D } from "../geo/emprise3d";
 import type { Element } from "../types";
-import type { DonneesScene3D, Surface3D, Vegetal3D, PointCote3D } from "./types";
+import type { DonneesScene3D, Surface3D, Vegetal3D, PointCote3D, Masquant3D, FormeMasquant } from "./types";
+
+const FORMES_MASQUANT: FormeMasquant[] = ["cone", "boule", "colonne", "haie", "arbre"];
+
+/** Volume masquant d'un végétal existant du plan (forme choisie, sinon d'après sa catégorie). */
+export function masquantExistant(el: Element, altitudeEn?: ((x: number, y: number) => number) | null): Masquant3D | null {
+  if (el.type !== "vegetal" || el.statut !== "existant" || el.geometrie.type !== "point") return null;
+  const pos = el.geometrie.position;
+  const choisie = el.proprietes.forme_existant as FormeMasquant | undefined;
+  const forme: FormeMasquant = choisie && FORMES_MASQUANT.includes(choisie) ? choisie
+    : el.proprietes.categorie === "arbre" ? "arbre" : "boule";
+  const num = (v: unknown, defaut: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : defaut);
+  const diametre = num(el.proprietes.diametre_m, 1);
+  return {
+    id: el.id,
+    position: pos,
+    altitudeRelative: altitudeEn ? altitudeEn(pos[0], pos[1]) : 0,
+    forme,
+    hauteur_m: num(el.proprietes.hauteur_m ?? el.hauteur, 1),
+    diametre_m: diametre,
+    longueur_m: num(el.proprietes.longueur_m, Math.max(diametre, 2)),
+    orientation_deg: typeof el.proprietes.orientation_deg === "number" ? el.proprietes.orientation_deg : 0,
+  };
+}
 
 /** Couleurs par défaut par nom de calque. */
 const COULEURS_CALQUES: Record<string, string> = {
@@ -80,6 +103,7 @@ export function preparerDonneesScene(
 
   const surfaces: Surface3D[] = [];
   const vegetaux: Vegetal3D[] = [];
+  const masquants: Masquant3D[] = [];
 
   for (const el of elements) {
     if (el.type === "sol" || el.type === "mineral") {
@@ -91,9 +115,12 @@ export function preparerDonneesScene(
           couleur: couleurs[el.calque] ?? "#888888",
         });
       }
-    } else if (el.type === "vegetal" && el.geometrie.type === "point" && el.statut !== "existant") {
-      // Les végétaux « existants » sont réellement présents sur les photos : ils ne
-      // s'affichent que sur le plan, jamais dans le Visuel, la vue 3D libre ni le rendu IA.
+    } else if (el.type === "vegetal" && el.geometrie.type === "point" && el.statut === "existant") {
+      // Les végétaux « existants » sont réellement présents sur les photos : jamais dessinés
+      // (plan uniquement), mais leur volume masque les plantes situées derrière eux.
+      const m = masquantExistant(el, altitudeEn);
+      if (m && pointDansEmprise(m.position, emprise)) masquants.push(m);
+    } else if (el.type === "vegetal" && el.geometrie.type === "point") {
       const pos = el.geometrie.position;
       if (pointDansEmprise(pos, emprise)) {
         const planteId = el.proprietes.plante_id as string | undefined;
@@ -121,6 +148,7 @@ export function preparerDonneesScene(
     batiments,
     surfaces,
     vegetaux,
+    masquants,
     altitudeEn: altitudeEn ?? null,
     pointsCotes,
     zoneContour,

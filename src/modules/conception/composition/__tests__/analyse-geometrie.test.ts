@@ -6,7 +6,7 @@ import {
   grilleMassif, nomColonne, indiceColonne, lireCase, rectCase, centreCase, caseDuPoint, traitsGrille, decrireGrille,
 } from "../grille";
 import { projeterSol, vueVoitMassif, etiquettesProjetees, grilleProjetee, dansImage } from "../projection-vue";
-import { rectsDesCases, zonesExclusion, distanceRect, dansExclusion, empriseDesCases } from "../exclusions";
+import { rectsDesCases, empriseDesCases, cerclesExclusion, referenceExistant } from "../exclusions";
 import { placerComposition, type PlanteAPlacer } from "../placement";
 
 const plat = () => 0;
@@ -110,26 +110,16 @@ describe("projection de la grille sur une photo calée", () => {
   });
 });
 
-describe("zones d'exclusion", () => {
+describe("zones d'exclusion (cercles à l'emprise réelle)", () => {
   const g = grilleMassif(MASSIF);
+  const ex = (nature: string, cases: string[], recommandation: string) =>
+    ({ nature, cases, recommandation, description: nature }) as Parameters<typeof cerclesExclusion>[0]["analyse"] extends infer A ? A extends { existants: (infer E)[] } ? E : never : never;
 
   it("cases → carrés du plan, cases invalides ignorées, doublons retirés", () => {
     expect(rectsDesCases(g, ["F5", "f5", "Z99", "??", "G5"])).toEqual([
       { x0: 1, y0: 10, x1: 2, y1: 11 },
       { x0: 2, y0: 10, x1: 3, y1: 11 },
     ]);
-    expect(zonesExclusion(g, [{ libelle: "If", cases: ["F5"] }, { libelle: "rien", cases: ["Z99"] }])).toEqual([
-      { libelle: "If", rects: [{ x0: 1, y0: 10, x1: 2, y1: 11 }] },
-    ]);
-  });
-
-  it("distance à un carré, et seuil du rayon", () => {
-    const r = { x0: 0, y0: 0, x1: 1, y1: 1 };
-    expect(distanceRect([0.5, 0.5], r)).toBe(0);
-    expect(distanceRect([2, 0.5], r)).toBe(1);
-    expect(distanceRect([4, 5], r)).toBe(5);
-    expect(dansExclusion([1.3, 0.5], 0.35, [r])).toBe(true);
-    expect(dansExclusion([1.4, 0.5], 0.35, [r])).toBe(false);
   });
 
   it("emprise d'un élément existant (pour l'ajouter au plan)", () => {
@@ -137,20 +127,48 @@ describe("zones d'exclusion", () => {
     expect(empriseDesCases([])).toBeNull();
   });
 
-  it("le placement évite les zones d'exclusion et place quand même le reste", () => {
-    const exclusions = rectsDesCases(g, ["E5", "F5", "E6", "F6"]); // 2 m × 2 m au centre du massif
+  it("seul l'existant conservé exclut ; jamais une surface, ni un élément supprimé ou à évaluer", () => {
+    const cercles = cerclesExclusion({
+      existantsPlan: [],
+      grille: g,
+      analyse: { existants: [
+        ex("topiaire", ["F5"], "conserver"),
+        ex("pelouse", ["E5", "E6", "F6", "G6"], "conserver"),
+        ex("gravier", ["E7"], "remplacer"),
+        ex("arbuste", ["G7"], "supprimer"),
+        ex("arbuste", ["E4"], "a_evaluer"),
+      ] },
+    });
+    expect(cercles).toEqual([{ centre: [1.5, 10.5], rayon: 0.5, libelle: "topiaire" }]);
+  });
+
+  it("élément du plan : cercle à son diamètre et à sa position (déplaçable), sans doublon avec l'analyse", () => {
+    const topiaire = ex("topiaire", ["F5", "G5", "F6", "G6"], "conserver");
+    const cercles = cerclesExclusion({
+      existantsPlan: [{ position: [0.4, 9.2], diametre: 1.2, reference: referenceExistant(topiaire), libelle: "if" }],
+      grille: g,
+      analyse: { existants: [topiaire] },
+    });
+    expect(cercles).toEqual([{ centre: [0.4, 9.2], rayon: 0.6, libelle: "if" }]);
+  });
+
+  it("référence stable : même nature et mêmes cases, quel que soit l'ordre ou la casse", () => {
+    expect(referenceExistant({ nature: "topiaire", cases: ["g5", "F5"] })).toBe(referenceExistant({ nature: "topiaire", cases: ["F5", "G5"] }));
+  });
+
+  it("le placement évite l'emprise de l'existant et plante tout autour", () => {
+    const exclusions = [{ centre: [1, 10] as Pt, rayon: 1 }]; // Ø 2 m au centre du massif
     const plantes: PlanteAPlacer[] = [
-      { cle: "a", rayon: 0.3, hauteur: 0.8, categorie: "vivace", forme: null, role: "masse", profondeur: "milieu", quantite: 12, tailleGroupe: 3, repetitions: 4 },
-      { cle: "b", rayon: 0.2, hauteur: 0.4, categorie: "vivace", forme: null, role: "masse", profondeur: "devant", quantite: 10, tailleGroupe: 5, repetitions: 2 },
+      { cle: "a", rayon: 0.3, hauteur: 0.8, categorie: "vivace", forme: null, role: "masse", profondeur: "milieu", part: 0.6, nombre: null, tailleGroupe: 3, repetitions: 4 },
+      { cle: "b", rayon: 0.2, hauteur: 0.4, categorie: "vivace", forme: null, role: "masse", profondeur: "devant", part: 0.4, nombre: null, tailleGroupe: 5, repetitions: 2 },
     ];
-    const r = placerComposition({ contour: MASSIF, plantes, versDevant: [0, -1], geometrique: false, tolerance: 0.3, existantes: [], graine: 7, exclusions });
+    const r = placerComposition({ contour: MASSIF, plantes, versDevant: [0, -1], geometrique: false, tolerance: 0.3, densite: "standard", existantes: [], graine: 7, exclusions });
     expect(r.placements.length).toBeGreaterThan(10);
-    const rayon = new Map(plantes.map((p) => [p.cle, p.rayon]));
-    for (const pl of r.placements) {
-      expect(dansExclusion(pl.position, rayon.get(pl.cle)!, exclusions)).toBe(false);
-    }
+    for (const pl of r.placements) expect(Math.hypot(pl.position[0] - 1, pl.position[1] - 10)).toBeGreaterThanOrEqual(1);
+    expect(r.surfacePlantable).toBeCloseTo(16 - Math.PI, 0);
+    expect(r.couverture).toBeGreaterThanOrEqual(0.85);
     // Sans exclusion, des plantes occupent cette zone : la contrainte agit vraiment
-    const libre = placerComposition({ contour: MASSIF, plantes, versDevant: [0, -1], geometrique: false, tolerance: 0.3, existantes: [], graine: 7 });
-    expect(libre.placements.some((pl) => dansExclusion(pl.position, rayon.get(pl.cle)!, exclusions))).toBe(true);
+    const libre = placerComposition({ contour: MASSIF, plantes, versDevant: [0, -1], geometrique: false, tolerance: 0.3, densite: "standard", existantes: [], graine: 7 });
+    expect(libre.placements.some((pl) => Math.hypot(pl.position[0] - 1, pl.position[1] - 10) < 1)).toBe(true);
   });
 });

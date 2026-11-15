@@ -20,7 +20,7 @@ export function BarreSaisie({ saisie, message, sauvegarde }: Props) {
     en_cours: "text-stone",
     non_sauvegarde: "text-brass",
     erreur: "text-red-600",
-    conflit: "text-red-600 font-medium",
+    conflit: "text-brass font-medium",
   };
 
   return (

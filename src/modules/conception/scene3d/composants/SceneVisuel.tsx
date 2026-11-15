@@ -9,6 +9,7 @@ import type { CameraParams, SoleilParams } from "../../camera/types";
 import type { PlanteSelectionnee } from "../../types";
 import type { Pt } from "../../geo/plan";
 import { planVers3D } from "../conversion";
+import { Masquants } from "./Masquants";
 import type { RaycastCallbacks } from "../interaction-vegetaux";
 import { GestionnairePointeurTerrain } from "./GestionnairePointeurTerrain";
 import { cameraParamsVersThree, soleilVersPosition } from "../../camera/projection";
@@ -33,6 +34,10 @@ export interface VisuelTestData {
   altitudeEn: (x: number, y: number) => number;
   /** Projette un point plan (x, y, hauteur) en coordonnées écran (clientX, clientY). */
   versEcran: (x: number, y: number, h: number) => [number, number] | null;
+  /** Volumes masquants des végétaux existants présents dans la scène. */
+  masquants: number;
+  /** Opacité (0–255) du rendu 3D en un point écran (0 = la photo est visible). */
+  alphaEn: (clientX: number, clientY: number) => number;
 }
 
 interface SceneVisuelProps {
@@ -89,6 +94,7 @@ export function SceneVisuel({
       </Suspense>
       <BatimentsOccludeurs batiments={donnees.batiments} altitudeEn={altitudeEn} />
       <TerrainOccludeur emprise={donnees.emprise} altitudeEn={altitudeEn} />
+      <Masquants masquants={donnees.masquants} />
       {raycastCallbacks && (
         <GestionnairePointeurTerrain
           emprise={donnees.emprise}
@@ -98,7 +104,7 @@ export function SceneVisuel({
           downScreenRef={downScreenRef}
         />
       )}
-      <DonneesTest vegetaux={donnees.vegetaux} altitudeEn={altitudeEn} />
+      <DonneesTest vegetaux={donnees.vegetaux} masquants={donnees.masquants.length} altitudeEn={altitudeEn} />
       {captureRef && <EnregistreurCapture captureRef={captureRef} donnees={donnees} altitudeEn={altitudeEn} />}
     </Canvas>
   );
@@ -400,8 +406,9 @@ function EnregistreurCapture({
 // DonneesTest : expose les données de test en développement.
 // ---------------------------------------------------------------------------
 
-function DonneesTest({ vegetaux, altitudeEn }: {
+function DonneesTest({ vegetaux, masquants, altitudeEn }: {
   vegetaux: DonneesScene3D["vegetaux"];
+  masquants: number;
   altitudeEn: (x: number, y: number) => number;
 }) {
   const { camera, gl, scene } = useThree();
@@ -429,13 +436,25 @@ function DonneesTest({ vegetaux, altitudeEn }: {
         const r = gl.domElement.getBoundingClientRect();
         return [r.left + ((p.x + 1) / 2) * r.width, r.top + ((1 - p.y) / 2) * r.height];
       },
+      masquants,
+      alphaEn: (cx, cy) => {
+        // Rendu à jour, puis lecture du pixel dans le tampon (preserveDrawingBuffer)
+        gl.render(scene, camera);
+        const r = gl.domElement.getBoundingClientRect();
+        const ctx = gl.getContext();
+        const px = Math.round(((cx - r.left) / r.width) * ctx.drawingBufferWidth);
+        const py = Math.round((1 - (cy - r.top) / r.height) * ctx.drawingBufferHeight);
+        const pixel = new Uint8Array(4);
+        ctx.readPixels(px, py, 1, 1, ctx.RGBA, ctx.UNSIGNED_BYTE, pixel);
+        return pixel[3];
+      },
     };
     (window as unknown as Record<string, unknown>).__visuelTest = testData;
 
     return () => {
       delete (window as unknown as Record<string, unknown>).__visuelTest;
     };
-  }, [vegetaux, altitudeEn, camera, gl, scene]);
+  }, [vegetaux, masquants, altitudeEn, camera, gl, scene]);
 
   return null;
 }

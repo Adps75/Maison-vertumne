@@ -178,7 +178,7 @@ export function devantDuMassif(
   contour: Pt[],
   vues: VuePlan[],
   batiments: BatimentPlan[],
-): { versDevant: Pt; devant: Contexte["devant"]; vuePrincipale: string | null } {
+): { versDevant: Pt; devant: Contexte["devant"]; vuePrincipale: string | null; pointDeVue: Pt | null } {
   const c = centroide(contour);
   const unitaire = (p: Pt): Pt => {
     const n = Math.hypot(p[0] - c[0], p[1] - c[1]) || 1;
@@ -192,6 +192,7 @@ export function devantDuMassif(
       versDevant: unitaire(principale.position),
       devant: { source: "vue", description: `devant tourné vers la vue « ${principale.nom} » (${cardinal(azimut(c, principale.position))})` },
       vuePrincipale: principale.nom,
+      pointDeVue: principale.position,
     };
   }
   let proche: { point: Pt; distance: number } | null = null;
@@ -205,9 +206,10 @@ export function devantDuMassif(
       versDevant: unitaire(proche.point),
       devant: { source: "facade", description: `devant tourné vers la façade la plus proche (${cardinal(azimut(c, proche.point))}, ${proche.distance.toFixed(1).replace(".", ",")} m)` },
       vuePrincipale: null,
+      pointDeVue: proche.point,
     };
   }
-  return { versDevant: [0, -1], devant: { source: "defaut", description: "devant tourné vers le sud (aucune vue ni façade proche)" }, vuePrincipale: null };
+  return { versDevant: [0, -1], devant: { source: "defaut", description: "devant tourné vers le sud (aucune vue ni façade proche)" }, vuePrincipale: null, pointDeVue: null };
 }
 
 export interface PlanteExistante {

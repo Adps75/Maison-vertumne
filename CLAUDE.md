@@ -108,6 +108,14 @@ Outil interne de conception paysagère. Cadrage complet : docs/module-conception
 ## À faire
 - Remplacer le window.confirm de la commande REF (changement de référence 0,00)
   par la boîte de dialogue à la charte (branche isolation et navigation).
+- Silhouette exacte des végétaux existants (après les volumes masquants) : détourage
+  sur la photo par SAM dans le navigateur (SlimSAM ou MobileSAM via transformers.js,
+  ONNX/WebGPU, ~40 Mo chargés une fois, aucune photo envoyée). Clic sur l'existant →
+  masque → polygone simplifié en pixels normalisés, enregistré avec le point de vue
+  (silhouettes: [{ element_id, polygone }]) et associé à l'élément existant. Masquage :
+  quadrilatère face caméra en profondeur seule, texture alpha de la silhouette, placé à
+  la distance de l'élément existant (cache les plantes plus loin, pas celles devant ;
+  vaut aussi pour le rendu IA). Repli : SAM 2 hébergé, ou détourage manuel au lasso.
 - Données climatiques : intégrer les données ouvertes de Météo-France
   (historiques et projections, licence ouverte), après vérification des conditions.
 

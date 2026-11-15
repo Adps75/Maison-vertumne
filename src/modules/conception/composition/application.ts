@@ -5,7 +5,7 @@
 
 import type { Element } from "../types";
 import { rayonEcartement } from "../vegetaux/ecartement";
-import { groupeImpair, type PlanteAPlacer, type Placement } from "./placement";
+import { groupeImpair, ROLES_NOMBRE_FIXE, type PlanteAPlacer, type Placement } from "./placement";
 import type { Brief, Intention } from "./schemas";
 
 /** Plante de la palette validée (données de la bibliothèque). */
@@ -21,12 +21,17 @@ export interface PlanteComposee {
   updated_at?: string;
 }
 
+/**
+ * Plantes à placer : nombre fixe pour la structure et la ponctuation (au moins 1),
+ * part de surface (0–1) pour les autres rôles. Les quantités sont calculées au placement.
+ */
 export function plantesAPlacer(intention: Intention, plantes: PlanteComposee[]): PlanteAPlacer[] {
   const parId = new Map(plantes.map((p) => [p.id, p]));
   const sortie: PlanteAPlacer[] = [];
   for (const i of intention.plantes) {
     const p = parId.get(i.plante_id);
     if (!p) continue;
+    const fixe = ROLES_NOMBRE_FIXE.includes(i.role);
     sortie.push({
       cle: p.id,
       rayon: rayonEcartement({ largeur_3ans_m: p.largeur_3ans_m ?? undefined, diametre_m: p.largeur_adulte_m ?? 1 }),
@@ -35,12 +40,27 @@ export function plantesAPlacer(intention: Intention, plantes: PlanteComposee[]):
       forme: p.forme,
       role: i.role,
       profondeur: i.profondeur,
-      quantite: Math.max(1, Math.round(i.quantite)),
+      nombre: fixe ? Math.max(1, Math.round(i.nombre ?? 1)) : null,
+      part: fixe ? 0 : Math.max(0, i.part_surface ?? 0) / 100,
       tailleGroupe: groupeImpair(i.taille_groupe),
       repetitions: Math.max(1, Math.round(i.repetitions)),
     });
   }
   return sortie;
+}
+
+/** Plantes de la palette qui n'existent plus dans la bibliothèque. */
+export function plantesAbsentes(palette: Pick<PlanteComposee, "id" | "nom_commun">[], presentes: string[]): Pick<PlanteComposee, "id" | "nom_commun">[] {
+  const ids = new Set(presentes);
+  return palette.filter((p) => !ids.has(p.id));
+}
+
+/** Message affiché quand la palette contient des plantes supprimées de la bibliothèque. */
+export function messagePlantesAbsentes(absentes: Pick<PlanteComposee, "nom_commun">[]): string {
+  const noms = absentes.map((p) => p.nom_commun).join(", ");
+  return absentes.length === 1
+    ? `${noms} n'existe plus dans la bibliothèque : relancez la composition avec une palette à jour.`
+    : `${noms} n'existent plus dans la bibliothèque : relancez la composition avec une palette à jour.`;
 }
 
 /** Tolérance de chevauchement ajustée à la densité demandée (bornée à [0 ; 0,4]). */

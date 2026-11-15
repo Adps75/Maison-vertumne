@@ -119,8 +119,11 @@ export type Profondeur = (typeof PROFONDEURS)[number];
 export const schemaIntention = z.object({
   plantes: z.array(z.object({
     plante_id: z.string(),
-    quantite: z.number().int(),
     role: z.enum(ROLES),
+    part_surface: z.number().nullable()
+      .describe("Part de la surface plantable en % (masses, fond, bordure, couvre-sol) ; null pour la structure et la ponctuation"),
+    nombre: z.number().int().nullable()
+      .describe("Nombre de sujets, uniquement pour la structure et la ponctuation ; null sinon"),
     profondeur: z.enum(PROFONDEURS),
     taille_groupe: z.number().int().describe("Nombre de sujets par groupe, impair (1, 3, 5, 7…)"),
     repetitions: z.number().int().describe("Nombre de groupes répartis dans le massif"),
@@ -141,12 +144,27 @@ export type Intention = z.infer<typeof schemaIntention>;
 
 export const NATURES_EXISTANT = [
   "arbre", "arbuste", "topiaire", "haie", "massif", "graminee", "couvre_sol", "grimpante",
-  "pelouse", "statue", "mur", "bordure", "dallage", "mobilier", "autre",
+  "pelouse", "sol_nu", "gravier", "statue", "mur", "bordure", "dallage", "mobilier", "autre",
 ] as const;
 export type NatureExistant = (typeof NATURES_EXISTANT)[number];
 
 /** Natures végétales (pouvant être ajoutées au plan comme végétal existant). */
 export const NATURES_VEGETALES: NatureExistant[] = ["arbre", "arbuste", "topiaire", "haie", "massif", "graminee", "couvre_sol", "grimpante"];
+
+/** Surfaces à remplacer par le massif : jamais conservées, jamais exclues du placement. */
+export const NATURES_SURFACES: NatureExistant[] = ["pelouse", "sol_nu", "gravier"];
+
+/** Forme du volume d'un végétal existant (masque du Visuel et du rendu IA). */
+export const FORMES_EXISTANT = ["cone", "boule", "colonne", "haie", "arbre"] as const;
+export type FormeExistant = (typeof FORMES_EXISTANT)[number];
+
+export const LIBELLES_FORMES_EXISTANT: Record<FormeExistant, string> = {
+  cone: "Cône", boule: "Boule", colonne: "Colonne", haie: "Haie (pavé)", arbre: "Arbre (tronc + couronne)",
+};
+
+/** Recommandations : l'IA ne propose jamais « supprimer » (décision du paysagiste). */
+export const RECOMMANDATIONS = ["conserver", "a_evaluer", "remplacer", "supprimer"] as const;
+export type Recommandation = (typeof RECOMMANDATIONS)[number];
 
 export const schemaElementExistant = z.object({
   nature: z.enum(NATURES_EXISTANT),
@@ -155,9 +173,12 @@ export const schemaElementExistant = z.object({
   confiance: z.enum(["faible", "moyenne", "elevee"]),
   cases: z.array(z.string()).describe("Cases de la grille occupées (ex. « C4 »), d'après le plan et les photos"),
   hauteur_estimee_m: z.number().nullable(),
-  recommandation: z.enum(["conserver", "a_evaluer"]),
+  forme: z.enum(FORMES_EXISTANT).nullable()
+    .describe("Forme du volume pour un végétal (cône, boule, colonne, haie, arbre) ; null pour une surface ou un objet"),
+  recommandation: z.enum(["conserver", "a_evaluer", "remplacer"])
+    .describe("Objet ou sujet : « conserver » s'il est sain et intéressant, « a_evaluer » en cas de doute. Surface (pelouse, sol nu, gravier) : toujours « remplacer »"),
 });
-export type ElementExistant = z.infer<typeof schemaElementExistant>;
+export type ElementExistant = Omit<z.infer<typeof schemaElementExistant>, "recommandation"> & { recommandation: Recommandation };
 
 const schemaZoneLumiere = z.object({ cases: z.array(z.string()), description: z.string() });
 
@@ -175,13 +196,24 @@ export const schemaAnalyse = z.object({
 });
 export type Analyse = z.infer<typeof schemaAnalyse>;
 
-/** Analyse validée par le paysagiste : existant corrigé, chaque élément peut être ajouté au plan. */
+/**
+ * Analyse validée par le paysagiste : chaque objet est « conserver » ou « supprimer »
+ * (plus aucun « à évaluer »), chaque surface est « remplacer » ; un élément conservé
+ * peut être ajouté au plan.
+ */
 export const schemaAnalyseValidee = schemaAnalyse.extend({
   existants: z.array(schemaElementExistant.extend({
+    recommandation: z.enum(RECOMMANDATIONS),
+    forme: z.enum(FORMES_EXISTANT).nullable().default(null),
     ajouterAuPlan: z.boolean(),
   })),
 });
 export type AnalyseValidee = z.infer<typeof schemaAnalyseValidee>;
+
+/** Éléments encore « à évaluer » : la composition reste bloquée tant qu'il en reste. */
+export function existantsAEvaluer(a: { existants: { recommandation: Recommandation }[] }): number {
+  return a.existants.filter((e) => e.recommandation === "a_evaluer").length;
+}
 
 export const schemaGrille = z.object({
   xMin: z.number(), yMax: z.number(), pas: z.number().positive(),

@@ -2,9 +2,9 @@
  * Composition IA — contrôles déterministes et coût, sans dépendance serveur (testables).
  */
 
-import type { Palette } from "./schemas";
+import type { Palette, Intention, Role } from "./schemas";
 import { lireCase, etiquette, type Grille } from "./grille";
-import type { Analyse } from "./schemas";
+import { NATURES_SURFACES, NATURES_VEGETALES, type Analyse, type FormeExistant, type NatureExistant, type Recommandation } from "./schemas";
 
 export interface PlanteBibliotheque {
   id: string;
@@ -70,8 +70,55 @@ export function nettoyerPalette(p: Palette, bibliotheque: PlanteBibliotheque[]):
   return { retenues, ajouts, remarques: remarques.filter(Boolean).join(" ") };
 }
 
+// ─── Intention ─────────────────────────────────────────────────────────
+
+const ROLES_FIXES: Role[] = ["structure", "ponctuation"];
+
+/**
+ * Intention contrôlée : plantes hors palette retirées ; structure et ponctuation en nombre
+ * fixe (au moins 1, sans part) ; autres rôles en part de surface (au moins 0, sans nombre),
+ * parts ramenées à 100 % (réparties également si aucune n'est donnée) ; répétitions ≥ 1.
+ */
+export function nettoyerIntention(i: Intention, idsPalette: string[]): Intention {
+  const ids = new Set(idsPalette);
+  const plantes = i.plantes.filter((p) => ids.has(p.plante_id)).map((p) => {
+    const fixe = ROLES_FIXES.includes(p.role);
+    return {
+      ...p,
+      nombre: fixe ? Math.max(1, Math.round(p.nombre ?? 1)) : null,
+      part_surface: fixe ? null : Math.max(0, p.part_surface ?? 0),
+      taille_groupe: Math.max(1, Math.round(p.taille_groupe)),
+      repetitions: Math.max(1, Math.round(p.repetitions)),
+    };
+  });
+  const libres = plantes.filter((p) => p.part_surface !== null);
+  const somme = libres.reduce((s, p) => s + (p.part_surface ?? 0), 0);
+  for (const p of libres) {
+    p.part_surface = Math.round((somme > 0 ? (p.part_surface! / somme) * 100 : 100 / libres.length) * 10) / 10;
+  }
+  return { ...i, plantes };
+}
+
 // ─── Analyse ───────────────────────────────────────────────────────────
 
+
+/** Forme proposée par défaut pour un végétal existant, d'après sa nature. */
+export const FORME_PAR_NATURE: Partial<Record<NatureExistant, FormeExistant>> = {
+  arbre: "arbre", haie: "haie", topiaire: "cone", arbuste: "boule", massif: "boule",
+  graminee: "boule", couvre_sol: "boule", grimpante: "colonne",
+};
+
+/**
+ * Règles fixes sur un élément de l'analyse : une surface (pelouse, sol nu, gravier) est
+ * toujours « remplacer » et sans forme ; un objet n'est jamais « remplacer » (→ à évaluer) ;
+ * un végétal reçoit une forme par défaut, un objet non végétal n'en a pas.
+ */
+export function normaliserExistant<T extends { nature: NatureExistant; recommandation: Recommandation; forme?: FormeExistant | null }>(e: T): T {
+  if (NATURES_SURFACES.includes(e.nature)) return { ...e, recommandation: "remplacer", forme: null };
+  const recommandation: Recommandation = e.recommandation === "remplacer" ? "a_evaluer" : e.recommandation;
+  const forme = NATURES_VEGETALES.includes(e.nature) ? (e.forme ?? FORME_PAR_NATURE[e.nature] ?? "boule") : null;
+  return { ...e, recommandation, forme };
+}
 
 /** Normalise les cases (« c4 » → « C4 ») et écarte celles hors grille ; un élément sans case valide est retiré. */
 export function nettoyerAnalyse(a: Analyse, g: Grille): Analyse {
@@ -85,7 +132,9 @@ export function nettoyerAnalyse(a: Analyse, g: Grille): Analyse {
     }
     return sortie;
   };
-  const existants = a.existants.map((e) => ({ ...e, cases: cases(e.cases) })).filter((e) => e.cases.length > 0);
+  const existants = a.existants
+    .map((e) => normaliserExistant({ ...e, cases: cases(e.cases) }) as Analyse["existants"][number])
+    .filter((e) => e.cases.length > 0);
   const retires = a.existants.length - existants.length;
   const zones = (z: { cases: string[]; description: string }[]) => z.map((x) => ({ ...x, cases: cases(x.cases) })).filter((x) => x.cases.length > 0);
   return {

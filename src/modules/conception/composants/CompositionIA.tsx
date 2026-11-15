@@ -12,16 +12,16 @@ import {
   dimensionsEtForme, exposition, pente, devantDuMassif, plantesAutour,
   type BatimentPlan, type VuePlan,
 } from "../composition/contexte";
-import { placerComposition, type EcartQuantite } from "../composition/placement";
+import { placerComposition, COUVERTURE_CIBLE, type EcartQuantite, type Densite } from "../composition/placement";
 import {
-  plantesAPlacer, toleranceDensite, elementsComposition, plantesCompositionExistante,
+  plantesAPlacer, toleranceDensite, elementsComposition, plantesCompositionExistante, plantesAbsentes, messagePlantesAbsentes,
 } from "../composition/application";
 import { NATURES_VEGETALES, type AnalyseValidee, type Contexte, type NatureExistant } from "../composition/schemas";
 import { grilleMassif, toutesLesCases, caseDuPoint, type Grille } from "../composition/grille";
 import { creerProjecteur } from "../camera/projection";
 import type { CameraParams } from "../camera/types";
 import { vueVoitMassif } from "../composition/projection-vue";
-import { rectsDesCases, zonesExclusion, empriseDesCases } from "../composition/exclusions";
+import { rectsDesCases, empriseDesCases, cerclesExclusion, referenceExistant } from "../composition/exclusions";
 import { empreinteAnalyse } from "../composition/empreinte";
 import { dessinerPlan, dessinerVue } from "../composition/images-analyse";
 import { pointDansPolygone } from "../geo/plan";
@@ -76,6 +76,9 @@ interface CompositionAffichee extends CompositionPrete {
   ids: string[];
   suppressions: string[];
   ecarts: EcartQuantite[];
+  /** Part de la surface plantable couverte à 3 ans (0–1), et objectif de la densité. */
+  couverture: number;
+  objectif: number;
 }
 
 function batimentsPlan(batiments: BatimentGeo[]): BatimentPlan[] {
@@ -216,9 +219,14 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
     }
     const ajouts: Element[] = [];
     for (const e of analyse.existants) {
-      if (!e.ajouterAuPlan || !NATURES_VEGETALES.includes(e.nature)) continue;
-      const emprise = empriseDesCases(rectsDesCases(grille, e.cases));
+      // Seul un végétal conservé est ajouté au plan (jamais une surface ni un élément supprimé)
+      if (!e.ajouterAuPlan || e.recommandation !== "conserver" || !NATURES_VEGETALES.includes(e.nature)) continue;
+      const rects = rectsDesCases(grille, e.cases);
+      const emprise = empriseDesCases(rects);
       if (!emprise) continue;
+      // Haie : pavé orienté selon le plus grand côté de ses cases
+      const largeurX = Math.max(...rects.map((r) => r.x1)) - Math.min(...rects.map((r) => r.x0));
+      const largeurY = Math.max(...rects.map((r) => r.y1)) - Math.min(...rects.map((r) => r.y0));
       if (deja.some((q) => Math.hypot(q[0] - emprise.centre[0], q[1] - emprise.centre[1]) < 0.3)) continue;
       const espece = e.espece_probable ?? "";
       const cat = CATEGORIE_EXISTANT[e.nature] ?? { categorie: "arbuste", forme: null };
@@ -238,6 +246,10 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
           forme: cat.forme,
           nature: e.nature,
           existant_analyse: true,
+          // Volume masquant du Visuel et du rendu IA ; modifiable dans les propriétés
+          forme_existant: e.forme ?? "boule",
+          existant_ref: referenceExistant(e),
+          ...(e.forme === "haie" ? { longueur_m: Math.max(largeurX, largeurY), orientation_deg: largeurX >= largeurY ? 0 : 90 } : {}),
         },
         ordre: p.elements.size + ajouts.length,
       });
@@ -252,17 +264,31 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
     if (!points) return;
     const exclues = new Set(suppressions);
     const existantes = extraireVoisines(p.elements).filter((v) => !exclues.has(v.id));
-    // Existant conservé (analyse validée) : zones d'exclusion du placement
-    const exclusions = zonesExclusion(pret.grille, pret.analyse.existants.map((e) => ({ libelle: e.nature, cases: e.cases }))).flatMap((z) => z.rects);
+    // Existant conservé : cercles à son emprise réelle (élément du plan, sinon d'après ses cases)
+    const existantsPlan = [];
+    for (const el of p.elements.values()) {
+      if (el.type !== "vegetal" || el.statut !== "existant" || el.geometrie.type !== "point") continue;
+      existantsPlan.push({
+        position: el.geometrie.position,
+        diametre: (el.proprietes.diametre_m as number) ?? 1,
+        reference: (el.proprietes.existant_ref as string) ?? null,
+        libelle: (el.proprietes.nom_commun as string) ?? "",
+      });
+    }
+    const exclusions = cerclesExclusion({ existantsPlan, analyse: pret.analyse, grille: pret.grille });
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as Record<string, unknown>).__compositionTest = { grille: pret.grille, exclusions };
     }
+    const devant = devantDuMassif(points, vues, bats);
+    const densite: Densite = pret.brief.densite;
     const resultat = placerComposition({
       contour: points,
       plantes: plantesAPlacer(pret.intention, pret.plantes),
-      versDevant: devantDuMassif(points, vues, bats).versDevant,
+      versDevant: devant.versDevant,
+      observateur: devant.pointDeVue,
       geometrique: pret.brief.structure === "geometrique" || pret.intention.geometrie?.symetrie === "gauche_droite",
-      tolerance: toleranceDensite(p.tolerance, pret.brief.densite),
+      tolerance: toleranceDensite(p.tolerance, densite),
+      densite,
       existantes,
       graine,
       exclusions,
@@ -276,15 +302,30 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
       genererId: genererIdLocal,
     });
     p.dispatch({ type: "APPLIQUER_COMPOSITION", ajouts, suppressions });
-    setAffichee({ ...pret, graine, ids: ajouts.map((a) => a.id), suppressions, ecarts: resultat.ecarts });
+    setAffichee({
+      ...pret, graine, ids: ajouts.map((a) => a.id), suppressions, ecarts: resultat.ecarts,
+      couverture: resultat.couverture, objectif: COUVERTURE_CIBLE[densite],
+    });
   }, [pointsContour, p, vues, bats]);
 
-  const onComposer = useCallback((pret: CompositionPrete) => {
+  /** Vérifie que chaque plante de la palette existe toujours dans la bibliothèque (message sinon). */
+  const palettePresente = useCallback(async (pret: CompositionPrete): Promise<boolean> => {
+    const ids = pret.plantes.map((x) => x.id);
+    const r = await fetch(`/api/conception/plantes?ids=${ids.join(",")}`).then((x) => x.json()).catch(() => null);
+    if (!r?.ok) return true; // vérification impossible (réseau) : le placement reste local, sans risque
+    const absentes = plantesAbsentes(pret.plantes, (r.plantes as { id: string }[]).map((x) => x.id));
+    if (absentes.length === 0) return true;
+    setMessage(messagePlantesAbsentes(absentes));
+    return false;
+  }, []);
+
+  const onComposer = useCallback(async (pret: CompositionPrete) => {
     setOuvert(false);
+    if (!(await palettePresente(pret))) return;
     const existantes = plantesCompositionExistante(p.elements.values(), pret.contourId);
     if (existantes.length > 0) setAConfirmer({ pret, existantes });
     else appliquer(pret, 1, []);
-  }, [p.elements, appliquer]);
+  }, [p.elements, appliquer, palettePresente]);
 
   /** La dernière action annulable est-elle bien cette composition ? */
   const estDerniere = useCallback((c: CompositionAffichee) => {
@@ -302,13 +343,14 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
     setAffichee(null);
   };
 
-  const autreProposition = () => {
+  const autreProposition = async () => {
     if (!affichee) return;
     if (!estDerniere(affichee)) {
       setMessage("Le plan a été modifié depuis la composition : utilisez Cmd+Z pour revenir en arrière.");
       setAffichee(null);
       return;
     }
+    if (!(await palettePresente(affichee))) { setAffichee(null); return; }
     p.dispatch({ type: "ANNULER" });
     appliquer(affichee, affichee.graine + 1, affichee.suppressions);
   };
@@ -350,7 +392,7 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
             <div className="flex justify-end gap-2">
               <button className="border border-hair-light hover:bg-paper-2 rounded px-3 py-1.5" onClick={() => setAConfirmer(null)}>Annuler</button>
               <button className="bg-brass hover:bg-brass-soft text-paper rounded px-3 py-1.5" data-testid="btn-confirmer-remplacement"
-                onClick={() => { const c = aConfirmer; setAConfirmer(null); appliquer(c.pret, 1, c.existantes); }}>
+                onClick={async () => { const c = aConfirmer; setAConfirmer(null); if (await palettePresente(c.pret)) appliquer(c.pret, 1, c.existantes); }}>
                 Remplacer
               </button>
             </div>
@@ -362,7 +404,11 @@ export function useCompositionIA(p: Params): { ouvrir: () => void; rendu: ReactN
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[65] bg-ink text-paper rounded shadow-xl px-4 py-2.5 flex items-center gap-3 text-[0.8rem] max-w-[95vw]"
           data-testid="barre-composition">
           <span>
-            <strong>Composition IA</strong> · {affichee.ids.length} plantes
+            <strong>Composition IA</strong> · {affichee.ids.length} plantes ·{" "}
+            <span className={affichee.couverture < affichee.objectif ? "text-brass-soft font-medium" : ""} data-testid="couverture-surface"
+              title={`Projection des couronnes à 3 ans sur la surface plantable (objectif ${Math.round(affichee.objectif * 100)} %)`}>
+              Surface couverte : {Math.round(affichee.couverture * 100)} %
+            </span>
             {affichee.ecarts.length > 0 && <span className="text-amber-200" data-testid="ecarts-composition"> · place insuffisante ({nomsEcarts(affichee.ecarts)})</span>}
           </span>
           <button className="bg-brass hover:bg-brass-soft rounded px-3 py-1" onClick={garder} data-testid="btn-garder-composition">Garder</button>

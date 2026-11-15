@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CONTEXTE_CLIMATIQUE_DEFAUT, LIBELLES_STYLES, SAISONS, STYLES, NATURES_EXISTANT, NATURES_VEGETALES,
-  type Brief, type Contexte, type FichePlante, type Intention, type Palette, type AnalyseValidee, type NatureExistant,
+  FORMES_EXISTANT, LIBELLES_FORMES_EXISTANT, existantsAEvaluer,
+  type Brief, type Contexte, type FichePlante, type Intention, type Palette, type AnalyseValidee, type NatureExistant, type FormeExistant,
 } from "../composition/schemas";
+import { normaliserExistant } from "../composition/controles";
 import type { PlanteComposee } from "../composition/application";
 import { lireCase, etiquette, type Grille } from "../composition/grille";
 
@@ -77,7 +79,7 @@ const BRIEF_DEFAUT: Brief = {
 
 const LIBELLES_NATURES: Record<NatureExistant, string> = {
   arbre: "Arbre", arbuste: "Arbuste", topiaire: "Topiaire", haie: "Haie", massif: "Massif", graminee: "Graminée",
-  couvre_sol: "Couvre-sol", grimpante: "Grimpante", pelouse: "Pelouse", statue: "Statue", mur: "Mur",
+  couvre_sol: "Couvre-sol", grimpante: "Grimpante", pelouse: "Pelouse", sol_nu: "Sol nu", gravier: "Gravier", statue: "Statue", mur: "Mur",
   bordure: "Bordure", dallage: "Dallage", mobilier: "Mobilier", autre: "Autre",
 };
 const LIBELLES_CONFIANCE = { faible: "confiance faible", moyenne: "confiance moyenne", elevee: "confiance élevée" } as const;
@@ -86,6 +88,8 @@ const champBase = "border border-hair-light rounded px-2 py-1.5 bg-paper text-in
 const champ = `w-full ${champBase}`;
 const bouton = "bg-brass hover:bg-brass-soft text-paper rounded px-4 py-2 text-[0.8rem] disabled:opacity-50 disabled:cursor-not-allowed";
 const boutonSecondaire = "border border-hair-light hover:bg-paper-2 rounded px-3 py-1.5 text-[0.75rem]";
+const boutonChoisiConserver = "border border-green-800 bg-green-800 hover:bg-green-900 text-paper rounded px-3 py-1.5 text-[0.75rem]";
+const boutonChoisiSupprimer = "border border-stone bg-stone hover:bg-ink text-paper rounded px-3 py-1.5 text-[0.75rem]";
 
 export function AssistantComposition({ projetId, contours, contourParDefaut, calculerContexte, preparerAnalyse, onAnalyseValidee, onComposer, onFermer }: Props) {
   const [etape, setEtape] = useState<"brief" | "analyse" | "palette">("brief");
@@ -155,13 +159,14 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
       setCompositionId(r.compositionId);
       setGrille(preparation.grille);
       setAnalyseReutilisee(!!r.reutilisee);
-      // Analyse brute : les végétaux à conserver sont proposés pour le plan
+      // Analyse brute (ou enregistrée) : règles fixes (surfaces à remplacer, forme par défaut),
+      // les végétaux conservés sont proposés pour le plan
       setAnalyse({
         ...r.analyse_existant,
-        existants: r.analyse_existant.existants.map((e: AnalyseValidee["existants"][number]) => ({
-          ...e,
-          ajouterAuPlan: e.ajouterAuPlan ?? (NATURES_VEGETALES.includes(e.nature) && e.recommandation === "conserver"),
-        })),
+        existants: r.analyse_existant.existants.map((brut: AnalyseValidee["existants"][number]) => {
+          const e = normaliserExistant({ ...brut, forme: brut.forme ?? null });
+          return { ...e, ajouterAuPlan: e.recommandation === "conserver" && NATURES_VEGETALES.includes(e.nature) && (brut.ajouterAuPlan ?? true) };
+        }),
       });
       setEtape("analyse");
     } catch (e) {
@@ -173,6 +178,23 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
 
   const majExistant = (i: number, patch: Partial<AnalyseValidee["existants"][number]>) =>
     setAnalyse((a) => (a ? { ...a, existants: a.existants.map((e, j) => (j === i ? { ...e, ...patch } : e)) } : a));
+
+  /** Changement de nature : règles fixes réappliquées (une surface devient « à remplacer »). */
+  const majNature = (i: number, nature: NatureExistant) =>
+    setAnalyse((a) => (a ? { ...a, existants: a.existants.map((e, j) => {
+      if (j !== i) return e;
+      const n = normaliserExistant({ ...e, nature, forme: NATURES_VEGETALES.includes(nature) ? e.forme : null,
+        recommandation: e.recommandation === "remplacer" ? "a_evaluer" : e.recommandation });
+      return { ...n, ajouterAuPlan: n.recommandation === "conserver" && NATURES_VEGETALES.includes(nature) };
+    }) } : a));
+
+  /** Décision du paysagiste sur un objet : conserver (exclu du placement) ou supprimer. */
+  const decider = (i: number, recommandation: "conserver" | "supprimer") => {
+    const e = analyse?.existants[i];
+    if (!e) return;
+    majExistant(i, { recommandation, ajouterAuPlan: recommandation === "conserver" && NATURES_VEGETALES.includes(e.nature) });
+  };
+  const aEvaluer = analyse ? existantsAEvaluer(analyse) : 0;
 
   /** Cases saisies (« C4, D4 ») normalisées ; celles hors grille sont écartées. */
   const lireCases = (texte: string) => {
@@ -192,8 +214,10 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
     setAnalyse({
       ...analyse,
       existants: [...analyse.existants, {
-        nature: nouvelElement.nature, description: "Ajouté par le paysagiste", espece_probable: nouvelElement.espece.trim() || null,
-        confiance: "elevee", cases, hauteur_estimee_m: null, recommandation: "conserver",
+        ...normaliserExistant({
+          nature: nouvelElement.nature, description: "Ajouté par le paysagiste", espece_probable: nouvelElement.espece.trim() || null,
+          confiance: "elevee" as const, cases, hauteur_estimee_m: null, forme: null, recommandation: "conserver" as const,
+        }),
         ajouterAuPlan: NATURES_VEGETALES.includes(nouvelElement.nature),
       }],
     });
@@ -227,6 +251,7 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
 
   const validerAnalyse = async () => {
     if (!compositionId || !analyse || !grille) return;
+    if (existantsAEvaluer(analyse) > 0) return;
     setErreur(null);
     setEnCours("Enregistrement de l'analyse…");
     const r = await fetch(`/api/conception/projets/${projetId}/compositions/${compositionId}`, {
@@ -482,29 +507,49 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
               {analyse.remarques && <p className="text-stone text-[0.75rem]">{analyse.remarques}</p>}
 
               <h3 className="font-medium">Existant identifié</h3>
-              <p className="text-stone text-[0.72rem]">Les éléments de cette liste sont conservés : le placement évite leurs cases. Corrigez l&apos;espèce, retirez ou ajoutez un élément.</p>
+              <p className="text-stone text-[0.72rem]">
+                Pour chaque élément, choisissez « Conserver » (le placement évite son emprise) ou « Supprimer » (le massif le remplace).
+                Les surfaces (pelouse, sol nu, gravier) sont toujours remplacées. Corrigez l&apos;espèce, retirez une erreur ou ajoutez un élément.
+              </p>
               <ul className="space-y-2">
                 {analyse.existants.map((e, i) => (
-                  <li key={i} className="rounded border border-hair-light p-2 grid grid-cols-1 md:grid-cols-[130px_1fr_150px_auto] gap-2 items-center" data-testid="existant">
-                    <select className={champ} value={e.nature} onChange={(ev) => majExistant(i, { nature: ev.target.value as NatureExistant })} aria-label="Nature">
+                  <li key={i} className="rounded border border-hair-light p-2 grid grid-cols-1 md:grid-cols-[130px_1fr_150px] gap-2 items-center" data-testid="existant">
+                    <select className={champ} value={e.nature} onChange={(ev) => majNature(i, ev.target.value as NatureExistant)} aria-label="Nature">
                       {NATURES_EXISTANT.map((n) => <option key={n} value={n}>{LIBELLES_NATURES[n]}</option>)}
                     </select>
                     <div className="min-w-0">
                       <input className={champ} value={e.espece_probable ?? ""} placeholder="Espèce (inconnue)"
                         onChange={(ev) => majExistant(i, { espece_probable: ev.target.value || null })} data-testid="existant-espece" aria-label="Espèce" />
                       <p className="text-[0.7rem] text-stone mt-0.5 truncate">
-                        {e.description} · {LIBELLES_CONFIANCE[e.confiance]} · {e.recommandation === "conserver" ? "à conserver" : "à évaluer"}
+                        {e.description} · {LIBELLES_CONFIANCE[e.confiance]}
                         {e.hauteur_estimee_m ? ` · ≈ ${String(e.hauteur_estimee_m).replace(".", ",")} m` : ""}
                       </p>
                     </div>
                     <input className={champ} defaultValue={e.cases.join(" ")} aria-label="Cases"
                       onBlur={(ev) => { const c = lireCases(ev.target.value); if (c.length > 0) majExistant(i, { cases: c }); else ev.target.value = e.cases.join(" "); }} />
-                    <div className="flex items-center gap-2 text-[0.72rem]">
-                      {NATURES_VEGETALES.includes(e.nature) && (
-                        <label className="flex items-center gap-1 whitespace-nowrap">
-                          <input type="checkbox" checked={e.ajouterAuPlan} onChange={(ev) => majExistant(i, { ajouterAuPlan: ev.target.checked })} data-testid="existant-ajouter-plan" />
-                          Ajouter au plan
-                        </label>
+                    <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-[0.72rem]" data-testid="existant-decision" data-recommandation={e.recommandation}>
+                      {e.recommandation === "remplacer" ? (
+                        <span className="rounded bg-paper-2 px-2 py-1" data-testid="existant-surface">Surface à remplacer</span>
+                      ) : (
+                        <>
+                          {e.recommandation === "a_evaluer" && <span className="text-brass font-medium">À évaluer :</span>}
+                          <button className={e.recommandation === "conserver" ? boutonChoisiConserver : boutonSecondaire}
+                            aria-pressed={e.recommandation === "conserver"} onClick={() => decider(i, "conserver")} data-testid="existant-conserver">Conserver</button>
+                          <button className={e.recommandation === "supprimer" ? boutonChoisiSupprimer : boutonSecondaire}
+                            aria-pressed={e.recommandation === "supprimer"} onClick={() => decider(i, "supprimer")} data-testid="existant-supprimer">Supprimer</button>
+                        </>
+                      )}
+                      {NATURES_VEGETALES.includes(e.nature) && e.recommandation === "conserver" && (
+                        <>
+                          <select className={champBase} value={e.forme ?? "boule"} onChange={(ev) => majExistant(i, { forme: ev.target.value as FormeExistant })}
+                            aria-label="Forme du volume" title="Forme du volume qui masque les plantes situées derrière, dans le Visuel et le rendu IA" data-testid="existant-forme">
+                            {FORMES_EXISTANT.map((f) => <option key={f} value={f}>{LIBELLES_FORMES_EXISTANT[f]}</option>)}
+                          </select>
+                          <label className="flex items-center gap-1 whitespace-nowrap">
+                            <input type="checkbox" checked={e.ajouterAuPlan} onChange={(ev) => majExistant(i, { ajouterAuPlan: ev.target.checked })} data-testid="existant-ajouter-plan" />
+                            Ajouter au plan
+                          </label>
+                        </>
                       )}
                       <button className={boutonSecondaire} onClick={() => setAnalyse({ ...analyse, existants: analyse.existants.filter((_, j) => j !== i) })} data-testid="existant-retirer">
                         Retirer
@@ -649,9 +694,16 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
               Analyser les vues
             </button>
           ) : etape === "analyse" ? (
-            <button className={bouton} onClick={validerAnalyse} disabled={enCours !== null} data-testid="btn-valider-analyse">
-              Valider l&apos;analyse
-            </button>
+            <>
+              {aEvaluer > 0 && (
+                <span className="text-brass font-medium text-[0.75rem]" data-testid="message-a-evaluer">
+                  {aEvaluer === 1 ? "1 élément à évaluer" : `${aEvaluer} éléments à évaluer`} : choisissez « Conserver » ou « Supprimer » pour continuer.
+                </span>
+              )}
+              <button className={bouton} onClick={validerAnalyse} disabled={enCours !== null || aEvaluer > 0} data-testid="btn-valider-analyse">
+                Valider l&apos;analyse
+              </button>
+            </>
           ) : (
             <button className={bouton} onClick={composer} disabled={!peutComposer || enCours !== null} data-testid="btn-composer">
               Composer le massif

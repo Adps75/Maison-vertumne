@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { coutAnthropic, nettoyerPalette, type PlanteBibliotheque } from "../controles";
+import { coutAnthropic, nettoyerPalette, nettoyerIntention, type PlanteBibliotheque } from "../controles";
 import { schemaPalette, schemaIntention, schemaBrief, CONTEXTE_CLIMATIQUE_DEFAUT, type Palette } from "../schemas";
 import { nettoyerAnalyse } from "../controles";
-import { schemaAnalyse } from "../schemas";
+import { schemaAnalyse, existantsAEvaluer } from "../schemas";
 import { grilleMassif } from "../grille";
 
 const biblio = (id: string, nom_latin: string): PlanteBibliotheque => ({
@@ -45,11 +45,27 @@ describe("validation Zod des réponses de l'IA", () => {
     expect(schemaPalette.safeParse({ retenues: [], ajouts: [{ ...fiche("X"), categorie: "cactus" }], remarques: "" }).success).toBe(false);
     expect(schemaPalette.safeParse({ retenues: [], ajouts: [] }).success).toBe(false);
   });
-  it("intention : quantité non entière ou rôle inconnu refusés", () => {
-    const base = { plante_id: "a", quantite: 3, role: "masse", profondeur: "milieu", taille_groupe: 3, repetitions: 1 };
+  it("intention : part de surface ou nombre, jamais de quantité totale ; nombre non entier ou rôle inconnu refusés", () => {
+    const base = { plante_id: "a", role: "masse", part_surface: 40, nombre: null, profondeur: "milieu", taille_groupe: 3, repetitions: 1 };
     expect(schemaIntention.safeParse({ plantes: [base], geometrie: null, explication: "" }).success).toBe(true);
-    expect(schemaIntention.safeParse({ plantes: [{ ...base, quantite: 2.5 }], geometrie: null, explication: "" }).success).toBe(false);
+    expect(schemaIntention.safeParse({ plantes: [{ ...base, role: "structure", part_surface: null, nombre: 2.5 }], geometrie: null, explication: "" }).success).toBe(false);
     expect(schemaIntention.safeParse({ plantes: [{ ...base, role: "decor" }], geometrie: null, explication: "" }).success).toBe(false);
+    expect(JSON.stringify(z.toJSONSchema(schemaIntention))).not.toContain('"quantite"');
+  });
+  it("intention nettoyée : nombre fixe pour structure et ponctuation, parts ramenées à 100 %, hors palette retirée", () => {
+    const i = nettoyerIntention({
+      plantes: [
+        { plante_id: "buis", role: "structure", part_surface: 10, nombre: null, profondeur: "milieu", taille_groupe: 1, repetitions: 0 },
+        { plante_id: "a", role: "masse", part_surface: 30, nombre: 4, profondeur: "fond", taille_groupe: 3, repetitions: 2 },
+        { plante_id: "b", role: "couvre_sol", part_surface: 10, nombre: null, profondeur: "devant", taille_groupe: 5, repetitions: 2 },
+        { plante_id: "hors", role: "masse", part_surface: 60, nombre: null, profondeur: "devant", taille_groupe: 5, repetitions: 2 },
+      ],
+      geometrie: null, explication: "",
+    }, ["buis", "a", "b"]);
+    expect(i.plantes.map((p) => p.plante_id)).toEqual(["buis", "a", "b"]);
+    expect(i.plantes[0]).toMatchObject({ nombre: 1, part_surface: null, repetitions: 1 });
+    expect(i.plantes[1]).toMatchObject({ nombre: null, part_surface: 75 });
+    expect(i.plantes[2]).toMatchObject({ nombre: null, part_surface: 25 });
   });
   it("aucun champ de coordonnées dans les sorties de l'IA", () => {
     const texte = JSON.stringify([z.toJSONSchema(schemaPalette), z.toJSONSchema(schemaIntention)]);
@@ -83,7 +99,7 @@ describe("nettoyage de l'analyse", () => {
     style_existant: "s", ambiance: "a", premier_plan: "p", fond: "f", remarques: "",
     ombre_lumiere: { ombre: [{ cases: ["b2", "Z9"], description: "o" }], lumiere: [{ cases: ["Q1"], description: "l" }] },
   };
-  const el = (cases: string[]) => ({ nature: "arbre" as const, description: "d", espece_probable: null, confiance: "faible" as const, cases, hauteur_estimee_m: null, recommandation: "conserver" as const });
+  const el = (cases: string[]) => ({ nature: "arbre" as const, description: "d", espece_probable: null, confiance: "faible" as const, cases, hauteur_estimee_m: null, forme: null, recommandation: "conserver" as const });
 
   it("cases normalisées, hors grille écartées, élément sans case retiré et signalé", () => {
     const r = nettoyerAnalyse({ ...base, existants: [el(["c4", "C4", "K1"]), el(["Z99"])] }, g);
@@ -91,6 +107,30 @@ describe("nettoyage de l'analyse", () => {
     expect(r.remarques).toMatch(/1 élément/);
     expect(r.ombre_lumiere.ombre).toEqual([{ cases: ["B2"], description: "o" }]);
     expect(r.ombre_lumiere.lumiere).toEqual([]);
+  });
+
+  it("surfaces toujours « remplacer », objet jamais « remplacer », forme par défaut d'un végétal", () => {
+    const r = nettoyerAnalyse({ ...base, existants: [
+      { ...el(["A1"]), nature: "pelouse", recommandation: "conserver" },
+      { ...el(["A2"]), nature: "sol_nu", recommandation: "a_evaluer" },
+      { ...el(["A3"]), nature: "topiaire", recommandation: "remplacer" },
+      { ...el(["A4"]), nature: "arbre" },
+      { ...el(["A5"]), nature: "statue", forme: "boule" },
+      { ...el(["A6"]), nature: "topiaire", forme: "boule" },
+    ] }, g);
+    expect(r.existants.map((e) => [e.nature, e.recommandation, e.forme])).toEqual([
+      ["pelouse", "remplacer", null],
+      ["sol_nu", "remplacer", null],
+      ["topiaire", "a_evaluer", "cone"],
+      ["arbre", "conserver", "arbre"],
+      ["statue", "conserver", null],
+      ["topiaire", "conserver", "boule"],
+    ]);
+  });
+
+  it("validation : plus aucun élément « à évaluer »", () => {
+    expect(existantsAEvaluer({ existants: [{ recommandation: "conserver" }, { recommandation: "a_evaluer" }, { recommandation: "supprimer" }] })).toBe(1);
+    expect(existantsAEvaluer({ existants: [{ recommandation: "conserver" }, { recommandation: "remplacer" }] })).toBe(0);
   });
 
   it("schéma : nature inconnue ou confiance manquante refusées", () => {

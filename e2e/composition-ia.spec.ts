@@ -134,13 +134,23 @@ async function composer(page: Page, bouton: string, captures: boolean, attendreR
   if (attendreReutilisation) {
     await expect(page.locator("[data-testid='analyse-reutilisee']")).toBeVisible();
   } else {
-    // Validation : corriger l'espèce du premier élément, retirer le second, garder l'ajout au plan
+    // Validation : topiaire conservé (espèce corrigée, forme choisie), arbuste « à évaluer »
+    // à trancher, pelouse = surface à remplacer (jamais proposée à la conservation)
     const existants = page.locator("[data-testid='existant']");
-    await expect(existants).toHaveCount(2);
+    await expect(existants).toHaveCount(3);
+    await expect(existants.nth(2).locator("[data-testid='existant-surface']")).toHaveText("Surface à remplacer");
+    await expect(existants.nth(2).locator("[data-testid='existant-conserver']")).toHaveCount(0);
+    // Composition bloquée tant qu'un élément est à évaluer
+    await expect(page.locator("[data-testid='message-a-evaluer']")).toContainText("1 élément à évaluer");
+    await expect(page.locator("[data-testid='btn-valider-analyse']")).toBeDisabled();
     await existants.nth(0).locator("[data-testid='existant-espece']").fill("Taxus baccata (if)");
     await expect(existants.nth(0).locator("[data-testid='existant-ajouter-plan']")).toBeChecked();
-    await existants.nth(1).locator("[data-testid='existant-retirer']").click();
-    await expect(existants).toHaveCount(1);
+    await expect(existants.nth(0).locator("[data-testid='existant-forme']")).toHaveValue("boule");
+    await existants.nth(0).locator("[data-testid='existant-forme']").selectOption("cone");
+    await existants.nth(1).locator("[data-testid='existant-supprimer']").click();
+    await expect(existants.nth(1).locator("[data-testid='existant-decision']")).toHaveAttribute("data-recommandation", "supprimer");
+    await expect(page.locator("[data-testid='message-a-evaluer']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='btn-valider-analyse']")).toBeEnabled();
     if (captures) await page.screenshot({ path: "e2e/screenshots/composition-analyse.png" });
   }
   await page.locator("[data-testid='btn-valider-analyse']").click();
@@ -223,13 +233,19 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     expect(existantsPlan.length).toBe(1);
     expect(existantsPlan[0].proprietes.nom_latin).toBe("Taxus baccata");
 
-    // Aucune plante composée dans les cases de l'existant conservé
-    const exclusions = await page.evaluate(() => ((window as unknown as Record<string, unknown>).__compositionTest as { exclusions: { x0: number; y0: number; x1: number; y1: number }[] }).exclusions);
-    expect(exclusions.length).toBeGreaterThan(0);
+    // Aucune plante composée dans l'emprise de l'existant conservé (cercle à son diamètre) ;
+    // la pelouse (surface à remplacer) et l'arbuste supprimé n'excluent rien
+    const exclusions = await page.evaluate(() => ((window as unknown as Record<string, unknown>).__compositionTest as { exclusions: { centre: [number, number]; rayon: number }[] }).exclusions);
+    expect(exclusions.length).toBe(1);
+    expect(existantsPlan[0].proprietes.forme_existant).toBe("cone");
+    expect(exclusions[0].centre).toEqual(existantsPlan[0].geometrie.position);
     for (const e of compo) {
       const [x, y] = e.geometrie.position!;
-      for (const r of exclusions) expect(x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1).toBe(false);
+      for (const c of exclusions) expect(Math.hypot(x - c.centre[0], y - c.centre[1])).toBeGreaterThanOrEqual(c.rayon);
     }
+    // Toute la surface est plantée : indicateur de couverture ≥ 85 % (densité standard)
+    const couverture = await page.locator("[data-testid='couverture-surface']").textContent();
+    expect(Number(couverture?.match(/(\d+) %/)?.[1])).toBeGreaterThanOrEqual(85);
 
     // Images réellement envoyées au modèle
     for (const nom of ["plan", "vue-1"]) {
@@ -246,9 +262,10 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     // « Autre proposition » : même nombre de plantes, positions différentes, toujours une seule action
     const positions1 = compo.map((e) => e.geometrie.position).sort().join(";");
     await page.locator("[data-testid='btn-autre-proposition']").click();
-    await page.waitForTimeout(500);
+    // La palette est d'abord revérifiée (appel serveur) : attendre la nouvelle proposition
+    await expect.poll(async () => (await plantesDuPlan(page)).filter((e) => e.proprietes.composition_id)
+      .map((e) => e.geometrie.position).sort().join(";"), { timeout: 10_000 }).not.toBe(positions1);
     const compo2 = (await plantesDuPlan(page)).filter((e) => e.proprietes.composition_id);
-    expect(compo2.map((e) => e.geometrie.position).sort().join(";")).not.toBe(positions1);
     for (const e of compo2) expect(dansPolygone(e.geometrie.position!, massifPoints)).toBe(true);
     await page.locator("[data-testid='btn-garder-composition']").click();
     await expect(page.locator("[data-testid='barre-composition']")).toHaveCount(0);
@@ -368,5 +385,83 @@ test.describe.serial("Composition IA (IA et images simulées)", () => {
     await page.locator("[data-testid='btn-garder-composition']").click();
 
     expect(erreurs500, "réponses serveur en erreur 500").toEqual([]);
+  });
+
+  test("Visuel : une plante derrière un végétal existant est masquée, une plante devant reste visible", async ({ page }) => {
+    // Caméra de la vue calée et axe de visée
+    const pdv = await (await page.request.get(`/api/conception/projets/${projetId}/points-de-vue`)).json();
+    const cam = pdv.points_de_vue[0].camera as { x: number; y: number; cap: number };
+    const a = (cam.cap * Math.PI) / 180;
+    const u: [number, number] = [Math.sin(a), Math.cos(a)];
+    const v: [number, number] = [Math.cos(a), -Math.sin(a)];
+    const pt = (d: number, l = 0): [number, number] => [cam.x + u[0] * d + v[0] * l, cam.y + u[1] * d + v[1] * l];
+
+    // Une plante de la bibliothèque avec image
+    const biblio = await (await page.request.get("/api/conception/plantes?statut=validee")).json();
+    const plante = (biblio.plantes as { id: string; nom_commun: string; nom_latin: string; face_url: string | null; hauteur_adulte_m: number | null; largeur_adulte_m: number | null; categorie: string; updated_at: string }[])
+      .find((p) => p.face_url && (p.hauteur_adulte_m ?? 1) <= 1.5)!;
+    expect(plante).toBeTruthy();
+
+    // Plan réduit au cas étudié : un if en cône (2,5 m, Ø 1,4 m) à 8 m de la caméra, une plante
+    // derrière lui (10 m), une devant (6 m), une derrière mais décalée sur le côté (témoin)
+    const { elements } = await (await page.request.get(`/api/conception/projets/${projetId}/elements`)).json();
+    const vegetauxAvant = (elements as { id: string; type: string }[]).filter((e) => e.type === "vegetal").map((e) => e.id);
+    const { projet } = await (await page.request.get(`/api/conception/projets/${projetId}`)).json();
+    const vegetal = (id: string, position: [number, number]) => ({
+      id, type: "vegetal", calque: "vegetal", statut: "nouveau", hauteur: plante.hauteur_adulte_m ?? 1, ordre: 50,
+      geometrie: { type: "point", position },
+      proprietes: {
+        plante_id: plante.id, nom_commun: plante.nom_commun, nom_latin: plante.nom_latin, version: plante.updated_at,
+        hauteur_m: plante.hauteur_adulte_m ?? 1, diametre_m: plante.largeur_adulte_m ?? 0.6, categorie: plante.categorie, rotation: 0,
+      },
+    });
+    const IF_ID = crypto.randomUUID(), DERRIERE = crypto.randomUUID(), DEVANT = crypto.randomUUID(), COTE = crypto.randomUUID();
+    const maj = await page.request.patch(`/api/conception/projets/${projetId}/elements`, {
+      data: {
+        suppressions: vegetauxAvant,
+        upserts: [
+          { id: IF_ID, type: "vegetal", calque: "existant", statut: "existant", hauteur: 2.5, ordre: 49,
+            geometrie: { type: "point", position: pt(8) },
+            proprietes: { nom_commun: "If (test)", nom_latin: "Taxus baccata", diametre_m: 1.4, hauteur_m: 2.5, categorie: "arbuste", forme: null, forme_existant: "cone", existant_analyse: true } },
+          vegetal(DERRIERE, pt(10)), vegetal(DEVANT, pt(6)), vegetal(COTE, pt(10, 3)),
+        ],
+        updated_at: projet.elements_modifies_le ?? projet.updated_at,
+      },
+    });
+    expect(maj.ok()).toBeTruthy();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/conception/${projetId}`);
+    await page.waitForTimeout(3000);
+    await page.locator("[data-testid='etape-5']").click();
+    await page.waitForTimeout(1000);
+    await page.locator("[data-testid^='pdv-']").first().click();
+    await expect(page.locator("[data-testid='vue-visuel']")).toBeVisible({ timeout: 15000 });
+    await page.waitForFunction(() => {
+      const t = (window as unknown as Record<string, unknown>).__visuelTest as { vegetaux: unknown[]; vegetauxAffiches: () => number; masquants: number } | undefined;
+      return !!t && t.vegetaux.length === 3 && t.vegetauxAffiches() >= 3 && t.masquants === 1;
+    }, null, { timeout: 30000 });
+    await page.waitForTimeout(1500);
+
+    // Opacité du rendu 3D sur l'axe vertical de chaque plante (0 = la photo est visible)
+    const h = plante.hauteur_adulte_m ?? 1;
+    const opacite = (p: [number, number]) => page.evaluate(([x, y, hauteur]) => {
+      const t = (window as unknown as Record<string, unknown>).__visuelTest as {
+        versEcran: (x: number, y: number, h: number) => [number, number] | null; alphaEn: (cx: number, cy: number) => number;
+        altitudeEn: (x: number, y: number) => number;
+      };
+      // Hauteur absolue dans la scène : altitude du terrain au pied + fraction de la hauteur
+      let max = 0;
+      for (const f of [0.3, 0.45, 0.6]) {
+        const e = t.versEcran(x, y, t.altitudeEn(x, y) + hauteur * f);
+        if (e) max = Math.max(max, t.alphaEn(e[0], e[1]));
+      }
+      return max;
+    }, [p[0], p[1], h] as [number, number, number]);
+
+    expect(await opacite(pt(10)), "plante derrière l'if : masquée").toBe(0);
+    expect(await opacite(pt(6)), "plante devant l'if : visible").toBeGreaterThan(0);
+    expect(await opacite(pt(10, 3)), "plante derrière mais à côté de l'if : visible").toBeGreaterThan(0);
+    await page.screenshot({ path: "e2e/screenshots/visuel-masquant.png" });
   });
 });

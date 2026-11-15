@@ -22,6 +22,11 @@ export interface DonneesScene3D {
   surfaces: Surface3D[];
   /** Végétaux placés. */
   vegetaux: Vegetal3D[];
+  /**
+   * Végétaux existants (présents sur les photos) : volumes invisibles qui masquent les
+   * plantes du projet situées derrière eux (Visuel et rendu IA).
+   */
+  masquants: Masquant3D[];
   /** Fonction altitude relative en un point du plan. Null si pas de relief. */
   altitudeEn: ((x: number, y: number) => number) | null;
   /** Points cotés (pour affichage dans le calage). */
@@ -42,6 +47,24 @@ export interface Surface3D {
   points: Pt[];
   /** Couleur hex du calque. */
   couleur: string;
+}
+
+/** Forme du volume masquant d'un végétal existant. */
+export type FormeMasquant = "cone" | "boule" | "colonne" | "haie" | "arbre";
+
+export interface Masquant3D {
+  id: string;
+  /** Position du pied [x, y] en coordonnées plan. */
+  position: Pt;
+  altitudeRelative: number;
+  forme: FormeMasquant;
+  hauteur_m: number;
+  /** Diamètre (épaisseur pour une haie). */
+  diametre_m: number;
+  /** Longueur d'une haie. */
+  longueur_m: number;
+  /** Orientation d'une haie, en degrés depuis l'est (sens trigonométrique). */
+  orientation_deg: number;
 }
 
 export interface Vegetal3D {
