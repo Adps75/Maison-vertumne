@@ -114,7 +114,7 @@ export async function DELETE(
     // Supprimer les fichiers des rendus (les lignes partent en cascade)
     const { data: rendus } = await supabase
       .from("conception_rendus")
-      .select("image_path, masque_path")
+      .select("image_path, masque_path, carte_path")
       .eq("point_de_vue_id", pdvId);
     await supprimerFichiersRendus(supabase, rendus ?? []);
 

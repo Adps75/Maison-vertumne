@@ -12,6 +12,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { nettoyageApres } from "./outils/nettoyage";
 import sharp from "sharp";
+import fs from "fs";
+import { couleursCarte, type Materiau } from "../src/modules/conception/materiaux/materiaux";
 
 test.use({ storageState: "e2e/.auth/state.json" });
 
@@ -26,8 +28,13 @@ let pdv2Id: string | null = null;
 const MASSIF_ID = crypto.randomUUID();
 const GAZON_ID = crypto.randomUUID();
 const VOLIGE_ID = crypto.randomUUID();
-const BORDURE_ID = crypto.randomUUID();
+const RECT_ID = crypto.randomUUID();
+const VOLIGE5_ID = crypto.randomUUID();
 let gazonCentre: [number, number] = [0, 0];
+/** Point du massif (paillage) à 1 m du centre, à côté de la plante. */
+let massifTemoin: [number, number] = [0, 0];
+/** Volige de 5 m dans le champ de la vue : extrémités, milieu, et un point de pelouse à côté. */
+let volige5: { a: [number, number]; b: [number, number]; milieu: [number, number]; pelouse: [number, number] } | null = null;
 let massif: { cx: number; cy: number; demi: number } | null = null;
 const PHOTO = { l: 800, h: 600 };
 /** Coût calculé depuis la consommation fictive du fournisseur simulé (USAGE_SIMULE). */
@@ -140,7 +147,7 @@ async function generer(page: Page, style: string) {
 }
 
 interface RenduApi {
-  id: string; style: string; cout: number; masque_path: string | null;
+  id: string; style: string; cout: number; masque_path: string | null; carte_path: string | null;
   consigne: string; consigne_style: string; references_utilisees: { id: string }[]; consignes_sup: string | null; annotations: boolean;
 }
 async function listeRendus(page: Page, vue = pdvId): Promise<RenduApi[]> {
@@ -194,20 +201,25 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     const biblio = await (await page.request.get("/api/conception/materiaux")).json();
     const id = (nom: string) => (biblio.materiaux as { id: string; nom: string }[]).find((m) => m.nom === nom)?.id;
     expect(id("Gazon (rénovation)"), "Appliquer la migration 00025 (matériaux)").toBeTruthy();
-    // Gazon rénové de 1,5 × 1,5 m à droite du massif (hors du massif) ; derrière la caméra (hors du
-    // champ) : volige de 12,5 m, et bordure sur un rectangle de 10 × 4 m dont un grand côté est exclu
+    // Massif en paillage d'écorce ; gazon rénové de 1,5 × 1,5 m à droite du massif (hors du massif) ;
+    // volige de 5 m devant le massif ; derrière la caméra (hors du champ) : volige de 12,5 m, et un
+    // rectangle de 10 × 4 m sans matériau (outils BOR et DEC)
     gazonCentre = pt(7, 3.2);
+    massifTemoin = pt(7, 1);
+    volige5 = { a: pt(5, -2.5), b: pt(5, 2.5), milieu: pt(5, 0), pelouse: pt(5, 4) };
     const g = 0.75;
     const res = await page.request.patch(`/api/conception/projets/${projetId}/elements`, {
       data: {
         upserts: [
-          { id: MASSIF_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, proprietes: {}, ordre: 1,
+          { id: MASSIF_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, proprietes: { materiau_id: id("Paillage écorce de pin") }, ordre: 1,
             geometrie: { type: "polygone", points: [[cx - demi, cy - demi], [cx + demi, cy - demi], [cx + demi, cy + demi], [cx - demi, cy + demi]] } },
           { id: GAZON_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, ordre: 2, proprietes: { materiau_id: id("Gazon (rénovation)") },
             geometrie: { type: "polygone", points: [pt(7 - g, 3.2 - g), pt(7 - g, 3.2 + g), pt(7 + g, 3.2 + g), pt(7 + g, 3.2 - g)] } },
           { id: VOLIGE_ID, type: "limite", calque: "sols", statut: "nouveau", hauteur: null, ordre: 3, proprietes: { materiau_id: id("Volige acier") },
             geometrie: { type: "polyligne", points: [pt(-9, -4), pt(-9, 3.5), pt(-14, 3.5)] } },
-          { id: BORDURE_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, ordre: 4, proprietes: { materiau_id: id("Bordure pierre"), cotes_exclus: [0] },
+          { id: VOLIGE5_ID, type: "limite", calque: "sols", statut: "nouveau", hauteur: null, ordre: 4, proprietes: { materiau_id: id("Volige acier") },
+            geometrie: { type: "polyligne", points: [volige5.a, volige5.b] } },
+          { id: RECT_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, ordre: 5, proprietes: {},
             geometrie: { type: "rectangle", points: [pt(-2, -5), pt(-2, 5), pt(-6, 5), pt(-6, -5)] } },
         ],
         suppressions: [], updated_at: null,
@@ -242,7 +254,7 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     await page.waitForTimeout(2000);
   });
 
-  test("matériaux : quantitatif du plan (ml et m²), choix dans Propriétés, clic sur un côté exclu", async ({ page }) => {
+  test("matériaux : quantitatif, bordures (BOR) sur des côtés choisis, découpe (DEC)", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/conception/${projetId}`);
     await page.waitForTimeout(4000);
@@ -250,55 +262,83 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     const panneau = page.locator("[data-testid='panneau-materiaux']");
     await expect(panneau).toBeVisible();
     const quantite = (nom: string) => panneau.locator("[data-testid^='quantite-']", { hasText: nom }).locator("[data-testid='quantite-valeur']");
-    await expect(quantite("Volige acier")).toHaveText("12,5 ml");
+    await expect(quantite("Volige acier")).toHaveText("17,5 ml"); // 12,5 + 5
     await expect(quantite("Gazon (rénovation)")).toHaveText("2,25 m²");
-    await expect(quantite("Bordure pierre")).toHaveText("18 ml"); // 10 × 4 m, un grand côté exclu : 4 + 10 + 4
-    await page.screenshot({ path: "e2e/screenshots/materiaux-panneau.png" });
+    await expect(quantite("Paillage écorce de pin")).toHaveText("9 m²");
 
-    // Sélection de la bordure : matériau et quantité dans Propriétés, puis clic sur le côté exclu pour le réinclure
-    await page.evaluate((id) => ((window as unknown as Record<string, unknown>).__editeurTest as { selectionner: (ids: string[]) => void }).selectionner([id]), BORDURE_ID);
-    await expect(page.locator("[data-testid='select-materiau'] option:checked")).toHaveText("Bordure pierre");
-    await expect(page.locator("[data-testid='info-quantite-materiau']")).toHaveText("18 ml");
-    await expect(page.locator("[data-testid='aide-cotes']")).toContainText("1 exclu");
-    const els = await page.evaluate(() => [...((window as unknown as Record<string, unknown>).__editeurTest as { elements: Map<string, { id: string; geometrie: { points: [number, number][] } }> }).elements.values()]);
-    const bordure = els.find((e) => e.id === BORDURE_ID)!;
-    const [a, b] = [bordure.geometrie.points[0], bordure.geometrie.points[1]];
-    // Cadrer le plan sur la bordure (30 px/m), puis clic sur le côté 0 au tiers
-    // (le milieu porte la poignée d'ajout de sommet)
-    const pts = bordure.geometrie.points;
+    // Cadrer le plan sur le rectangle (30 px/m)
+    const elements = async () => page.evaluate(() => [...((window as unknown as Record<string, unknown>).__editeurTest as {
+      elements: Map<string, { id: string; type: string; geometrie: { points?: [number, number][] }; proprietes: Record<string, unknown> }> }).elements.values()]);
+    const rect = (await elements()).find((e) => e.id === RECT_ID)!;
+    const pts = rect.geometrie.points!;
     const cx = (pts[0][0] + pts[2][0]) / 2, cy = (pts[0][1] + pts[2][1]) / 2;
     await page.evaluate(([x, y]) => {
       const c = document.querySelector("[data-testid='canevas-container']")!;
-      const z = 30;
-      window.dispatchEvent(new CustomEvent("cadrer-zone", { detail: { zoom: z, x: c.clientWidth / 2 - x * z, y: c.clientHeight / 2 + y * z } }));
+      window.dispatchEvent(new CustomEvent("cadrer-zone", { detail: { zoom: 30, x: c.clientWidth / 2 - x * 30, y: c.clientHeight / 2 + y * 30 } }));
     }, [cx, cy] as [number, number]);
     await expect.poll(() => page.evaluate(() => (window as unknown as Record<string, { zoom: number }>).__canevasTest.zoom)).toBe(30);
-    const versEcranPlan = (p: [number, number]) => page.evaluate(([x, y]) =>
-      (window as unknown as Record<string, { versEcran: (x: number, y: number) => [number, number] | null }>).__canevasTest.versEcran(x, y), p);
-    const clic = (await versEcranPlan([a[0] + (b[0] - a[0]) / 3, a[1] + (b[1] - a[1]) / 3]))!;
-    await page.mouse.click(clic[0], clic[1]);
-    await expect(page.locator("[data-testid='info-quantite-materiau']")).toHaveText("28 ml");
-    await expect(quantite("Bordure pierre")).toHaveText("28 ml");
-    await expect(page.locator("[data-testid='aide-cotes']")).not.toContainText("en pointillés");
-    // Nouveau clic : le côté est de nouveau exclu, en pointillés
-    await page.mouse.click(clic[0], clic[1]);
-    await expect(quantite("Bordure pierre")).toHaveText("18 ml");
-    await page.waitForTimeout(300);
-    await page.screenshot({ path: "e2e/screenshots/materiaux-cote-exclu.png" });
-    await page.keyboard.press("Control+z");
-    await expect(quantite("Bordure pierre")).toHaveText("28 ml");
-    await page.keyboard.press("Control+z");
-    await expect(quantite("Bordure pierre")).toHaveText("18 ml");
+    const ecran = (p: [number, number]) => page.evaluate(([x, y]) =>
+      (window as unknown as Record<string, { versEcran: (x: number, y: number) => [number, number] | null }>).__canevasTest.versEcran(x, y)!, p);
+    const surCote = (i: number, t = 1 / 3): Promise<[number, number]> => {
+      const a = pts[i], b = pts[(i + 1) % 4];
+      return ecran([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    };
+    const commande = async (c: string) => { await page.keyboard.type(c); await page.keyboard.press("Enter"); await page.waitForTimeout(200); };
 
-    // Changer le matériau d'une surface depuis Propriétés : le quantitatif suit
-    await page.evaluate((id) => ((window as unknown as Record<string, unknown>).__editeurTest as { selectionner: (ids: string[]) => void }).selectionner([id]), GAZON_ID);
-    await expect(page.locator("[data-testid='select-materiau'] option:checked")).toHaveText("Gazon (rénovation)");
-    await page.screenshot({ path: "e2e/screenshots/materiaux-proprietes.png" });
-    await page.locator("[data-testid='select-materiau']").selectOption({ label: "Paillage écorce de pin" });
-    await expect(quantite("Paillage écorce de pin")).toHaveText("2,25 m²");
-    await expect(panneau.locator("[data-testid^='quantite-']", { hasText: "Gazon" })).toHaveCount(0);
+    // BOR : surface, grand côté + petit côté (Maj), volige → 14 ml
+    await commande("BOR");
+    await expect(page.locator("[data-testid='panneau-bordure']")).toBeVisible();
+    const centre = await ecran([cx, cy]);
+    await page.mouse.click(centre[0], centre[1]);
+    const c0 = await surCote(0), c1 = await surCote(1);
+    await page.mouse.click(c0[0], c0[1]);
+    await page.keyboard.down("Shift");
+    await page.mouse.click(c1[0], c1[1]);
+    await page.keyboard.up("Shift");
+    await expect(page.locator("[data-testid='bordure-cotes']")).toHaveText("2 côtés · 14,00 ml");
+    await page.locator("[data-testid^='bordure-materiau-']", { hasText: "Volige acier" }).locator("input").check();
+    await page.screenshot({ path: "e2e/screenshots/materiaux-bordure.png" });
+    await page.locator("[data-testid='btn-creer-bordure']").click();
+    await expect(quantite("Volige acier")).toHaveText("31,5 ml"); // 17,5 + 14
+    // Deuxième bordure, autre matériau, sur le côté opposé ; un côté déjà bordé est refusé
+    const c2 = await surCote(2);
+    await page.mouse.click(c2[0], c2[1]);
+    await page.locator("[data-testid^='bordure-materiau-']", { hasText: "Bordure pierre" }).locator("input").check();
+    await page.keyboard.press("Enter");
+    await expect(quantite("Bordure pierre")).toHaveText("10 ml");
+    await page.mouse.click(c0[0], c0[1]);
+    await expect(page.locator("[data-testid='bordure-cotes']")).toContainText("Cliquez un côté");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    const bordures = (await elements()).filter((e) => e.proprietes.bordure_de === RECT_ID);
+    expect(bordures.length).toBe(2);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: "e2e/screenshots/materiaux-panneau.png" });
+
+    // DEC : ligne en travers du rectangle (au tiers du grand côté) → deux surfaces, aires totales 40 m²
+    await commande("DEC");
+    await page.mouse.click(centre[0], centre[1]);
+    const t1 = await ecran([pts[0][0] + (pts[1][0] - pts[0][0]) / 3 + (pts[0][0] - pts[3][0]) * 0.2, pts[0][1] + (pts[1][1] - pts[0][1]) / 3 + (pts[0][1] - pts[3][1]) * 0.2]);
+    const t2 = await ecran([pts[3][0] + (pts[2][0] - pts[3][0]) / 3 - (pts[0][0] - pts[3][0]) * 0.2, pts[3][1] + (pts[2][1] - pts[3][1]) / 3 - (pts[0][1] - pts[3][1]) * 0.2]);
+    await page.mouse.click(t1[0], t1[1]);
+    await page.mouse.click(t2[0], t2[1]);
+    await page.keyboard.press("Enter");
+    await expect(page.locator("[data-testid='barre-saisie']")).toContainText("surface découpée");
+    const apres = await elements();
+    const aire = (p: [number, number][]) => Math.abs(p.reduce((s, q, i) => s + q[0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * q[1], 0)) / 2;
+    // Les deux parties : la surface d'origine (plus grande) et la nouvelle
+    const parties = apres.filter((e) => e.type === "sol" && ![MASSIF_ID, GAZON_ID].includes(e.id) && e.geometrie.points);
+    expect(parties.length).toBe(2);
+    expect(parties.map((e) => e.id)).toContain(RECT_ID);
+    expect(parties.reduce((s, e) => s + aire(e.geometrie.points!), 0)).toBeCloseTo(40, 6);
+    expect(aire(parties.find((e) => e.id === RECT_ID)!.geometrie.points!)).toBeGreaterThan(20);
+    // Les bordures suivent leurs côtés : longueurs inchangées
+    await expect(quantite("Volige acier")).toHaveText("31,5 ml");
+    await expect(quantite("Bordure pierre")).toHaveText("10 ml");
+    // Cmd+Z : surface d'origine et bordures restaurées
     await page.keyboard.press("Control+z");
-    await expect(quantite("Gazon (rénovation)")).toHaveText("2,25 m²");
+    await expect.poll(async () => (await elements()).filter((e) => e.type === "sol" && e.geometrie.points && Math.abs(aire(e.geometrie.points) - 40) < 1e-6).length).toBe(1);
+    await expect(quantite("Volige acier")).toHaveText("31,5 ml");
     await page.waitForTimeout(3000); // sauvegarde différentielle
   });
 
@@ -322,6 +362,30 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     await expect.poll(async () => (await (await page.request.get(`/api/conception/projets/${projetId}`)).json()).projet.rendu_style).toBe("croquis");
   });
 
+  test("Visuel : matériaux dessinés en 3D avant l'IA (volige de 5 m à sa position, paillage, gazon)", async ({ page }) => {
+    await ouvrirVisuel(page);
+    const opacite = (p: [number, number], h: number) => page.evaluate(([x, y, hauteur]) => {
+      const t = (window as unknown as Record<string, unknown>).__visuelTest as {
+        versEcran: (x: number, y: number, h: number) => [number, number] | null; alphaEn: (cx: number, cy: number) => number; altitudeEn: (x: number, y: number) => number;
+      };
+      const e = t.versEcran(x, y, t.altitudeEn(x, y) + hauteur);
+      return e ? t.alphaEn(e[0], e[1]) : -1;
+    }, [p[0], p[1], h] as [number, number, number]);
+    // Textures chargées (ou couleur de repli) : laisser le temps du premier rendu
+    await page.waitForTimeout(2000);
+    expect(await opacite(volige5!.milieu, 0.03), "volige dessinée à sa position").toBeGreaterThan(0);
+    expect(await opacite(volige5!.a, 0.03), "extrémité de la volige").toBeGreaterThan(0);
+    expect(await opacite(volige5!.pelouse, 0.0), "pelouse à côté : photo seule").toBe(0);
+    expect(await opacite(massifTemoin, 0.0), "paillage du massif dessiné").toBeGreaterThan(0);
+    expect(await opacite(gazonCentre, 0.0), "gazon rénové dessiné").toBeGreaterThan(0);
+    await page.screenshot({ path: "e2e/screenshots/visuel-materiaux.png" });
+    // Bouton « Matériaux » : masqués à l'écran
+    await page.locator("[data-testid='btn-materiaux-visuel']").click();
+    expect(await opacite(volige5!.milieu, 0.03)).toBe(0);
+    await page.locator("[data-testid='btn-materiaux-visuel']").click();
+    expect(await opacite(volige5!.milieu, 0.03)).toBeGreaterThan(0);
+  });
+
   test("réaliste : masque avec le gazon rénové hors du massif, le reste est la photo d'origine", async ({ page }) => {
     await ouvrirVisuel(page);
     await ouvrirPanneau(page);
@@ -335,11 +399,13 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
 
     const rendu = (await listeRendus(page)).find((r) => r.style === "realiste")!;
     expect(rendu.masque_path).toBeTruthy();
-    // La consigne décrit le gazon rénové, inclus dans la zone retouchée
-    expect(rendu.consigne).toContain("Inside the transparent area, also render these project materials");
-    expect(rendu.consigne).toContain("Gazon (rénovation)");
-    expect(rendu.consigne).toMatch(/à droite du massif/);
-    expect(rendu.consigne).not.toContain("Volige acier"); // hors du champ de la vue
+    // La carte des matériaux accompagne la photo : légende des matériaux de la vue, aucune position en mots
+    expect(rendu.consigne).toMatch(/SECOND image is a MATERIAL MAP/);
+    expect(rendu.consigne).toMatch(/= Gazon \(rénovation\) :/);
+    expect(rendu.consigne).toMatch(/= Paillage écorce de pin :/);
+    expect(rendu.consigne).toMatch(/= Volige acier :/);
+    expect(rendu.consigne).not.toMatch(/devant le massif|à droite du massif/);
+    expect(rendu.carte_path).toBeTruthy();
 
     // Pied de la plante, en pixels de la photo
     const pied = await page.evaluate(() => {
@@ -366,9 +432,24 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
       const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
       return { data, largeur: info.width, hauteur: info.height };
     };
-    const [photo, image, masque] = await Promise.all([
+    const [photo, image, masque, carte] = await Promise.all([
       brut(`${base}/image`, 4), brut(`${base}/rendus/${rendu.id}/image`, 4), brut(`${base}/rendus/${rendu.id}/image?type=masque`, 1),
+      brut(`${base}/rendus/${rendu.id}/image?type=carte`, 4),
     ]);
+    // Carte des matériaux : paillage uniquement dans le massif, gazon dans sa zone, noir ailleurs
+    const biblio = await (await page.request.get("/api/conception/materiaux")).json();
+    const couleurs = couleursCarte(biblio.materiaux as Materiau[]);
+    const couleurDe = (nom: string) => couleurs.get((biblio.materiaux as Materiau[]).find((m) => m.nom === nom)!.id)!.rgb;
+    const pixelCarte = async (p: [number, number]) => {
+      const [x, y] = await pixelPhoto(page, p);
+      const j = (y * carte.largeur + x) * 4;
+      return [carte.data[j], carte.data[j + 1], carte.data[j + 2]];
+    };
+    expect(await pixelCarte(massifTemoin), "paillage dans le massif").toEqual(couleurDe("Paillage écorce de pin"));
+    expect(await pixelCarte(gazonCentre), "gazon rénové").toEqual(couleurDe("Gazon (rénovation)"));
+    expect(await pixelCarte(volige5!.pelouse), "pelouse hors massif : noir").toEqual([0, 0, 0]);
+    expect(await pixelCarte(volige5!.milieu), "volige").toEqual(couleurDe("Volige acier"));
+    fs.writeFileSync("e2e/screenshots/carte-materiaux.png", await sharp(Buffer.from(carte.data), { raw: { width: carte.largeur, height: carte.hauteur, channels: 4 } }).png().toBuffer());
     let hors = 0, horsIdentiques = 0, dedans = 0, dedansModifies = 0;
     for (let i = 0; i < masque.data.length; i++) {
       const j = i * 4;
@@ -426,7 +507,7 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     expect(r2.references_utilisees.map((r) => r.id)).toEqual(refs);
     expect(r1.consigne.startsWith(r1.consigne_style)).toBe(true);
     expect(r1.consigne_style).toMatch(/landscape architect's sketch/);
-    expect(r1.consigne_style).toMatch(/STYLE REFERENCES ONLY/);
+    expect(r1.consigne_style).toMatch(/STYLE REFERENCES? ONLY/);
     // Le fournisseur simulé a reçu les références (jetons d'image en plus)
     expect(Number(r1.cout)).toBeGreaterThan(COUT_SIMULE);
     // Options de la vue 1 : annotations et consignes supplémentaires

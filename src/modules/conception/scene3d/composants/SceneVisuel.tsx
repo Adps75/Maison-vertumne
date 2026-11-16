@@ -10,6 +10,7 @@ import type { PlanteSelectionnee } from "../../types";
 import type { Pt } from "../../geo/plan";
 import { planVers3D } from "../conversion";
 import { Masquants } from "./Masquants";
+import { Materiaux3D } from "./Materiaux3D";
 import type { RaycastCallbacks } from "../interaction-vegetaux";
 import { GestionnairePointeurTerrain } from "./GestionnairePointeurTerrain";
 import { cameraParamsVersThree, soleilVersPosition } from "../../camera/projection";
@@ -57,12 +58,15 @@ interface SceneVisuelProps {
   dragElementIdRef?: React.RefObject<string | null>;
   /** Reçoit la fonction de capture des couches du rendu IA. */
   captureRef?: React.MutableRefObject<CaptureurRendu | null>;
+  /** Matériaux du projet affichés (toujours capturés pour le rendu IA). */
+  materiauxVisibles?: boolean;
 }
 
 export function SceneVisuel({
   donnees, camera, soleil, altitudeEn, photoAspect,
   raycastCallbacks, onDragMove, downScreenRef,
   selection, planteAPoser, previewPositionRef, dragPositionRef, dragElementIdRef, captureRef,
+  materiauxVisibles = true,
 }: SceneVisuelProps) {
   return (
     <Canvas
@@ -95,6 +99,9 @@ export function SceneVisuel({
       <BatimentsOccludeurs batiments={donnees.batiments} altitudeEn={altitudeEn} />
       <TerrainOccludeur emprise={donnees.emprise} altitudeEn={altitudeEn} />
       <Masquants masquants={donnees.masquants} />
+      <Suspense fallback={null}>
+        <Materiaux3D materiaux={donnees.materiaux3D} altitudeEn={altitudeEn} visible={materiauxVisibles} />
+      </Suspense>
       {raycastCallbacks && (
         <GestionnairePointeurTerrain
           emprise={donnees.emprise}
@@ -397,9 +404,9 @@ function EnregistreurCapture({
       ...donnees.contoursMateriaux,
     ];
     captureRef.current = (largeur, hauteur) =>
-      capturerCouches({ gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn });
+      capturerCouches({ gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn, couleursCarte: new Map(Object.entries(donnees.couleursCarte)) });
     return () => { captureRef.current = null; };
-  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, donnees.contoursMateriaux, altitudeEn]);
+  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, donnees.contoursMateriaux, donnees.couleursCarte, altitudeEn]);
 
   return null;
 }

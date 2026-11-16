@@ -28,6 +28,8 @@ const EDITION: { nom: NomOutil; label: string; raccourci: string }[] = [
   { nom: "copier", label: "Copier", raccourci: "CO" },
   { nom: "rotation", label: "Rotation", raccourci: "RO" },
   { nom: "miroir", label: "Miroir", raccourci: "MI" },
+  { nom: "decouper", label: "Découper", raccourci: "DEC" },
+  { nom: "bordure", label: "Bordure", raccourci: "BOR" },
 ];
 
 export function BarreOutils({ outil, accrochage, ortho, etape, dispatch }: Props) {

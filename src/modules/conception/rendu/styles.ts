@@ -78,21 +78,56 @@ const CONSIGNES_STYLES: Record<StyleProjet, string> = {
   ].join(" "),
 };
 
-const CONSIGNE_REFERENCES = [
+const consigneReferences = (n: number) => [
   "The first image is the scene to transform.",
-  "The other images are STYLE REFERENCES ONLY: reproduce their drawing technique, line quality, colour palette, paper and texture,",
+  `The LAST ${n === 1 ? "image is a STYLE REFERENCE" : `${n} images are STYLE REFERENCES`} ONLY: reproduce their drawing technique, line quality, colour palette, paper and texture,`,
   "but do NOT copy their content, composition, buildings, plants or any object from them.",
 ].join(" ");
 
-const CONSIGNE_REFERENCES_REALISTE = [
+const consigneReferencesRealiste = (n: number) => [
   "The first image is the photograph to edit.",
-  "The other images are references for the rendering quality and atmosphere only: do NOT copy their content or any object from them.",
+  `The LAST ${n === 1 ? "image is a reference" : `${n} images are references`} for the rendering quality and atmosphere only: do NOT copy their content or any object from them.`,
 ].join(" ");
 
-/** Partie « style » de la consigne : identique pour toutes les vues du projet. */
+/**
+ * Partie « style » de la consigne : identique pour toutes les vues du projet (elle ne
+ * dépend ni de la carte des matériaux ni du contenu de la vue).
+ */
 export function consigneStyle(style: StyleProjet, nbReferences: number): string {
-  const refs = nbReferences > 0 ? ` ${style === "realiste" ? CONSIGNE_REFERENCES_REALISTE : CONSIGNE_REFERENCES}` : "";
+  const refs = nbReferences > 0 ? ` ${style === "realiste" ? consigneReferencesRealiste(nbReferences) : consigneReferences(nbReferences)}` : "";
   return `${CONSIGNES_STYLES[style]}${refs}`;
+}
+
+/** Entrée de la légende de la carte des matériaux. */
+export interface LegendeCarte {
+  nom: string;
+  /** Nom de la couleur sur la carte (« rouge », « vert »…). */
+  couleur: string;
+  description: string;
+}
+
+const COULEURS_EN: Record<string, string> = {
+  rouge: "red", vert: "green", bleu: "blue", jaune: "yellow", magenta: "magenta", cyan: "cyan", orange: "orange", violet: "purple",
+};
+
+/** Consigne de la carte des matériaux (deuxième image envoyée, juste après la scène). */
+export function consigneCarte(legende: LegendeCarte[], style: StyleProjet): string {
+  return [
+    "The SECOND image is a MATERIAL MAP with exactly the same framing as the scene: each flat colour marks the exact area of one project material.",
+    "Respect this map exactly: each material only inside its coloured zone, covering it entirely and never going beyond its edges; black areas of the map must not receive any of these materials (keep what is there).",
+    style === "realiste" ? "The materials are already drawn at their place in the scene: make them look real (texture, lighting, shadows, contact with the ground) without moving their edges." : "The materials are already drawn at their place in the scene: render them in the requested style without moving their edges.",
+    `Legend (descriptions in French):\n${legende.map((l) => `- ${COULEURS_EN[l.couleur] ?? l.couleur} = ${l.nom} : ${l.description}`).join("\n")}`,
+  ].join(" ");
+}
+
+/** Consigne d'une passe limitée à la zone d'un matériau (masque). */
+export function consignePasse(style: StyleProjet, m: { nom: string; description: string }): string {
+  const rendu = style === "realiste" ? "photorealistic, matching the photograph's lighting, colour and grain" : "in exactly the same drawing style as the rest of the image";
+  return [
+    `Edit ONLY the transparent (masked) area: it is exactly the area of the material « ${m.nom} » (${m.description}).`,
+    `Fill that whole area with this material, ${rendu}, following the perspective of the ground.`,
+    "Keep its edges exactly; do not draw it outside the transparent area; do not change, add or remove anything else, and keep the plants standing in the area.",
+  ].join(" ");
 }
 
 export interface OptionsConsigne {
@@ -102,22 +137,27 @@ export interface OptionsConsigne {
   annotations: boolean;
   /** Plantes principales visibles dans la vue (pour les annotations). */
   plantesPrincipales: string[];
-  /** Matériaux du projet visibles dans la vue. */
+  /** Matériaux du projet visibles dans la vue (texte, si aucune carte). */
   materiaux: MateriauDecrit[];
+  /** Légende de la carte des matériaux envoyée en deuxième image (vide : pas de carte). */
+  carte?: LegendeCarte[];
   /** Consignes supplémentaires du paysagiste (ambiance, saison, lumière). */
   consignesSup: string;
 }
 
 const UNITES = { m2: "m²", ml: "ml" } as const;
 
+/** Ligne de matériau sans position : la limite d'un matériau n'est jamais décrite en mots. */
 function ligneMateriau(m: MateriauDecrit): string {
-  return `- ${m.nom} (${String(m.quantite).replace(".", ",")} ${UNITES[m.unite]}, ${m.position}) : ${m.description}`;
+  return `- ${m.nom} (${String(m.quantite).replace(".", ",")} ${UNITES[m.unite]}) : ${m.description}`;
 }
 
 /** Consigne complète d'un rendu : style, matériaux, annotations, consignes supplémentaires. */
 export function consigneRendu(o: OptionsConsigne): string {
   const parties = [consigneStyle(o.style, o.nbReferences)];
-  if (o.materiaux.length > 0) {
+  if (o.carte && o.carte.length > 0) {
+    parties.push(consigneCarte(o.carte, o.style));
+  } else if (o.materiaux.length > 0) {
     parties.push(o.style === "realiste"
       ? `Inside the transparent area, also render these project materials, exactly where they are in the image (descriptions in French):\n${o.materiaux.map(ligneMateriau).join("\n")}`
       : `The project also includes these materials, to be drawn clearly where they are in the image (descriptions in French):\n${o.materiaux.map(ligneMateriau).join("\n")}`);

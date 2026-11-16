@@ -1,11 +1,9 @@
 /**
  * Matériaux du projet — fonctions pures.
  *
- * Un tracé (polyligne) ou une surface (polygone, rectangle, cercle) peut porter un
- * matériau (proprietes.materiau_id). Un matériau de surface se compte en m² ; un
- * matériau linéaire en ml : longueur d'un tracé, ou périmètre d'une surface dont on
- * peut exclure des côtés (proprietes.cotes_exclus : indices des côtés, le côté i
- * allant du sommet i au sommet i + 1).
+ * Une surface (polygone, rectangle, cercle) porte un matériau de surface (m²). Un
+ * tracé (polyligne) porte un matériau linéaire (ml) : tracé libre, ou bordure liée aux
+ * côtés d'une surface (voir ./bordures.ts), dont la géométrie suit le contour.
  */
 
 import { dist, surface, type Pt } from "../geo/plan";
@@ -25,6 +23,34 @@ export interface Materiau {
   prix_unitaire: number | null;
   largeur_m: number | null;
   ordre: number;
+  /** Texture répétable (bucket conception) et sa taille réelle en mètres (migration 00026). */
+  texture_path?: string | null;
+  texture_taille_m?: number | null;
+  /** Hauteur hors sol d'un linéaire (volige, bordure), en mètres. */
+  hauteur_m?: number | null;
+}
+
+/** URL de la texture d'un matériau (version = chemin, qui change à chaque remplacement). */
+export function urlTexture(m: Materiau): string | null {
+  return m.texture_path ? `/api/conception/materiaux/${m.id}/texture?v=${encodeURIComponent(m.texture_path)}` : null;
+}
+
+/** Couleurs franches de la carte des matériaux (une par matériau, dans l'ordre de la bibliothèque). */
+export const COULEURS_CARTE: { hex: string; nom: string; rgb: [number, number, number] }[] = [
+  { hex: "#FF0000", nom: "rouge", rgb: [255, 0, 0] },
+  { hex: "#00FF00", nom: "vert", rgb: [0, 255, 0] },
+  { hex: "#0000FF", nom: "bleu", rgb: [0, 0, 255] },
+  { hex: "#FFFF00", nom: "jaune", rgb: [255, 255, 0] },
+  { hex: "#FF00FF", nom: "magenta", rgb: [255, 0, 255] },
+  { hex: "#00FFFF", nom: "cyan", rgb: [0, 255, 255] },
+  { hex: "#FF8000", nom: "orange", rgb: [255, 128, 0] },
+  { hex: "#8000FF", nom: "violet", rgb: [128, 0, 255] },
+];
+
+/** Couleur de carte de chaque matériau (stable : ordre de la bibliothèque). */
+export function couleursCarte(materiaux: Materiau[]): Map<string, (typeof COULEURS_CARTE)[number]> {
+  const tries = [...materiaux].sort((a, b) => a.ordre - b.ordre || a.nom.localeCompare(b.nom, "fr"));
+  return new Map(tries.map((m, i) => [m.id, COULEURS_CARTE[i % COULEURS_CARTE.length]]));
 }
 
 /** Largeur minimale d'un linéaire dans le masque du rendu (m). */
@@ -44,17 +70,9 @@ export function contourFerme(el: Element): Pt[] | null {
   return null;
 }
 
-/** Côtés exclus d'une surface (indices valides, sans doublon, triés). */
-export function cotesExclus(el: Element): number[] {
-  const brut = el.proprietes.cotes_exclus;
-  if (!Array.isArray(brut) || el.geometrie.type === "cercle") return [];
-  const n = contourFerme(el)?.length ?? 0;
-  return [...new Set(brut.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < n))].sort((a, b) => a - b);
-}
-
 /**
- * Côtés exclus après insertion d'un sommet au milieu du côté `cote` : les deux moitiés
- * gardent l'état du côté coupé, les côtés suivants sont renumérotés.
+ * Côtés (d'une bordure) après insertion d'un sommet au milieu du côté `cote` : les deux
+ * moitiés gardent l'état du côté coupé, les côtés suivants sont renumérotés.
  */
 export function cotesApresInsertion(exclus: number[], cote: number): number[] {
   const sortie: number[] = [];
@@ -67,9 +85,9 @@ export function cotesApresInsertion(exclus: number[], cote: number): number[] {
 }
 
 /**
- * Côtés exclus après suppression du sommet `sommet` d'un contour de `n` sommets : ses
- * deux côtés fusionnent (exclu seulement si les deux l'étaient), les suivants sont
- * renumérotés.
+ * Côtés (d'une bordure) après suppression du sommet `sommet` d'un contour de `n`
+ * sommets : ses deux côtés fusionnent (gardé seulement si les deux l'étaient), les
+ * suivants sont renumérotés.
  */
 export function cotesApresSuppressionSommet(exclus: number[], sommet: number, n: number): number[] {
   const ex = new Set(exclus);
@@ -85,28 +103,12 @@ export function cotesApresSuppressionSommet(exclus: number[], sommet: number, n:
   return sortie.sort((a, b) => a - b);
 }
 
-/** Inclut ou exclut un côté (renvoie la nouvelle liste des côtés exclus). */
-export function basculerCote(el: Element, indice: number): number[] {
-  const actuels = cotesExclus(el);
-  return actuels.includes(indice) ? actuels.filter((i) => i !== indice) : [...actuels, indice].sort((a, b) => a - b);
-}
-
-/**
- * Segments comptés d'un matériau linéaire : tous les segments d'un tracé ; les côtés
- * inclus d'une surface (un cercle compte toute sa circonférence).
- */
+/** Segments d'un tracé linéaire (tracé libre ou bordure). */
 export function segmentsLineaires(el: Element): [Pt, Pt][] {
   const g = el.geometrie;
-  if (g.type === "polyligne") {
-    const s: [Pt, Pt][] = [];
-    for (let i = 0; i < g.points.length - 1; i++) s.push([g.points[i], g.points[i + 1]]);
-    return s;
-  }
-  const contour = contourFerme(el);
-  if (!contour) return [];
-  const exclus = new Set(cotesExclus(el));
+  if (g.type !== "polyligne") return [];
   const s: [Pt, Pt][] = [];
-  for (let i = 0; i < contour.length; i++) if (!exclus.has(i)) s.push([contour[i], contour[(i + 1) % contour.length]]);
+  for (let i = 0; i < g.points.length - 1; i++) s.push([g.points[i], g.points[i + 1]]);
   return s;
 }
 
@@ -140,14 +142,13 @@ export function quantiteElement(el: Element, m: Materiau): number {
     const c = contourFerme(el);
     return c ? surface(c) : 0;
   }
-  if (el.geometrie.type === "cercle" && cotesExclus(el).length === 0) return 2 * Math.PI * el.geometrie.rayon;
   return segmentsLineaires(el).reduce((s, [a, b]) => s + dist(a, b), 0);
 }
 
-/** Un matériau peut-il être posé sur cet élément ? (surface : contour fermé ; linéaire : tracé ou contour) */
+/** Un matériau peut-il être posé sur cet élément ? (surface : contour fermé ; linéaire : tracé) */
 export function materiauCompatible(el: Element, m: Materiau): boolean {
   if (m.type === "surface") return contourFerme(el) !== null;
-  return el.geometrie.type === "polyligne" || contourFerme(el) !== null;
+  return el.geometrie.type === "polyligne";
 }
 
 /** Matériau porté par un élément (s'il existe et est compatible). */
@@ -204,8 +205,8 @@ function bande(a: Pt, b: Pt, largeur: number): Pt[] {
 
 /**
  * Contours à inclure dans le masque du rendu réaliste pour les éléments portant un
- * matériau : la surface elle-même, ou une bande le long de chaque segment compté d'un
- * linéaire (largeur du matériau, au moins LARGEUR_MIN_MASQUE).
+ * matériau : la surface elle-même, ou une bande le long de chaque segment d'un linéaire
+ * (largeur du matériau, au moins LARGEUR_MIN_MASQUE).
  */
 export function contoursMasqueMateriaux(elements: Iterable<Element>, materiaux: Materiau[]): Pt[][] {
   const parId = new Map(materiaux.map((m) => [m.id, m]));
@@ -225,7 +226,7 @@ export function contoursMasqueMateriaux(elements: Iterable<Element>, materiaux: 
   return contours;
 }
 
-/** Centre (moyenne des sommets ou des milieux de segments comptés) d'un élément. */
+/** Centre (moyenne des sommets ou des milieux de segments) d'un élément. */
 export function centreElement(el: Element, m: Materiau): Pt | null {
   const pts: Pt[] = m.type === "lineaire"
     ? segmentsLineaires(el).map(([a, b]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as Pt)

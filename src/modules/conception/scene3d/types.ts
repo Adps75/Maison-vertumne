@@ -32,6 +32,10 @@ export interface DonneesScene3D {
    * du rendu réaliste, même hors du massif (ex. gazon rénové).
    */
   contoursMateriaux: Pt[][];
+  /** Matériaux dessinés dans la scène (Visuel et couche envoyée au rendu IA). */
+  materiaux3D: { surfaces: SurfaceMateriau3D[]; lineaires: LineaireMateriau3D[] };
+  /** Couleur de chaque matériau sur la carte des matériaux (id → « #RRGGBB »). */
+  couleursCarte: Record<string, string>;
   /** Fonction altitude relative en un point du plan. Null si pas de relief. */
   altitudeEn: ((x: number, y: number) => number) | null;
   /** Points cotés (pour affichage dans le calage). */
@@ -52,6 +56,26 @@ export interface Surface3D {
   points: Pt[];
   /** Couleur hex du calque. */
   couleur: string;
+}
+
+/** Surface portant un matériau : posée sur le relief, texture répétée à l'échelle réelle. */
+export interface SurfaceMateriau3D {
+  id: string;
+  points: Pt[];
+  materiauId: string;
+  couleur: string;
+  textureUrl: string | null;
+  tailleTexture: number;
+}
+
+/** Linéaire portant un matériau (volige, bordure) : bande à sa largeur et sa hauteur. */
+export interface LineaireMateriau3D {
+  id: string;
+  points: Pt[];
+  materiauId: string;
+  couleur: string;
+  largeur: number;
+  hauteur: number;
 }
 
 /** Forme du volume masquant d'un végétal existant. */

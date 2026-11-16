@@ -5,8 +5,11 @@
  * 1. Couche 3D : la scène telle qu'affichée (végétaux + ombres portées au sol),
  *    fond transparent. Les traits de construction sont dans une autre scène :
  *    ils n'y figurent jamais. L'anneau de sélection et l'aperçu de pose sont masqués.
- * 2. Masque de scène : silhouettes des végétaux et massif posé au sol en blanc,
- *    terrain et bâtiments en occultants noirs (la maison et le ciel restent à 0).
+ * 2. Masque de scène : silhouettes des végétaux, matériaux et massif posé au sol en
+ *    blanc, terrain et bâtiments en occultants noirs (la maison et le ciel restent à 0).
+ * 3. Carte des matériaux : chaque matériau en couleur franche (couleursCarte), tout le
+ *    reste en noir ; végétaux, terrain, bâtiments et existant occultent.
+ * Les matériaux sont toujours capturés, même masqués à l'écran.
  */
 
 import * as THREE from "three";
@@ -21,6 +24,8 @@ export interface CouchesCapturees {
   couche: Uint8ClampedArray;
   /** RGBA, blanc = végétaux et massif, noir ailleurs. */
   masqueScene: Uint8ClampedArray;
+  /** RGBA, couleur de carte de chaque matériau, noir ailleurs. */
+  carte: Uint8ClampedArray;
 }
 
 export type CaptureurRendu = (largeur: number, hauteur: number) => CouchesCapturees;
@@ -69,10 +74,11 @@ void main() {
 }`;
 const FRAGMENT_SILHOUETTE = `
 uniform sampler2D map;
+uniform vec3 couleur;
 varying vec2 vUv;
 void main() {
   if (texture2D(map, vUv).a < 0.1) discard;
-  gl_FragColor = vec4(1.0);
+  gl_FragColor = vec4(couleur, 1.0);
 }`;
 
 function lirePixels(gl: THREE.WebGLRenderer, rt: THREE.WebGLRenderTarget, largeur: number, hauteur: number): Uint8ClampedArray {
@@ -90,8 +96,11 @@ export function capturerCouches(params: {
   hauteur: number;
   contoursMassif: Pt[][];
   altitudeEn: (x: number, y: number) => number;
+  /** Couleur de carte de chaque matériau (id → « #RRGGBB »). */
+  couleursCarte?: Map<string, string>;
 }): CouchesCapturees {
   const { gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn } = params;
+  const couleursCarte = params.couleursCarte ?? new Map<string, string>();
 
   const cibleInitiale = gl.getRenderTarget();
   const couleurFond = gl.getClearColor(new THREE.Color());
@@ -102,10 +111,16 @@ export function capturerCouches(params: {
   scene.traverse((o) => {
     if (o.userData?.horsRendu && o.visible) { o.visible = false; masques.push(o); }
   });
+  // Matériaux toujours capturés, même masqués à l'écran
+  const reaffiches: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    if (o.userData?.groupeMateriaux && !o.visible) { o.visible = true; reaffiches.push(o); }
+  });
 
   const rtCouche = new THREE.WebGLRenderTarget(largeur, hauteur, { samples: 4 });
   rtCouche.texture.colorSpace = THREE.SRGBColorSpace;
   const rtMasque = new THREE.WebGLRenderTarget(largeur, hauteur);
+  const rtCarte = new THREE.WebGLRenderTarget(largeur, hauteur);
 
   const materiauxOrigine = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const materiauxTemp: THREE.Material[] = [];
@@ -122,14 +137,15 @@ export function capturerCouches(params: {
 
     // 2. Masque de scène
     const profondeurSeule = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
-    materiauxTemp.push(profondeurSeule);
+    const blanc = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    materiauxTemp.push(profondeurSeule, blanc);
     scene.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null };
       if (typeof mesh.userData?.vegetalId === "string" && mat?.map) {
         const silhouette = new THREE.ShaderMaterial({
-          uniforms: { map: { value: mat.map } },
+          uniforms: { map: { value: mat.map }, couleur: { value: new THREE.Color(1, 1, 1) } },
           vertexShader: VERTEX_SILHOUETTE,
           fragmentShader: FRAGMENT_SILHOUETTE,
           side: THREE.DoubleSide,
@@ -141,6 +157,10 @@ export function capturerCouches(params: {
         // Terrain : occultant, sans couleur
         materiauxOrigine.set(mesh, mesh.material);
         mesh.material = profondeurSeule;
+      } else if (mesh.userData?.materiau3D) {
+        // Matériaux du projet : dans la zone retouchée
+        materiauxOrigine.set(mesh, mesh.material);
+        mesh.material = blanc;
       }
     });
 
@@ -162,15 +182,62 @@ export function capturerCouches(params: {
     gl.clear();
     gl.render(scene, camera);
     const masqueScene = lirePixels(gl, rtMasque, largeur, hauteur);
+    if (massif) { scene.remove(massif); massif.geometry.dispose(); massif = null; }
 
-    return { largeur, hauteur, couche, masqueScene };
+    // 3. Carte des matériaux : couleurs franches, végétaux en silhouettes noires (occultants)
+    for (const [mesh, mat] of materiauxOrigine) mesh.material = mat;
+    materiauxOrigine.clear();
+    const noir = new THREE.Color(0, 0, 0);
+    const parCouleur = new Map<string, THREE.MeshBasicMaterial>();
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null };
+      if (typeof mesh.userData?.vegetalId === "string" && mat?.map) {
+        const silhouette = new THREE.ShaderMaterial({
+          uniforms: { map: { value: mat.map }, couleur: { value: noir } },
+          vertexShader: VERTEX_SILHOUETTE, fragmentShader: FRAGMENT_SILHOUETTE, side: THREE.DoubleSide,
+        });
+        materiauxTemp.push(silhouette);
+        materiauxOrigine.set(mesh, mesh.material);
+        mesh.material = silhouette;
+      } else if ((mat as THREE.Material)?.type === "ShadowMaterial") {
+        materiauxOrigine.set(mesh, mesh.material);
+        mesh.material = profondeurSeule;
+      } else if (mesh.userData?.materiau3D) {
+        const hex = couleursCarte.get(mesh.userData.materiauId as string) ?? "#000000";
+        let m = parCouleur.get(hex);
+        if (!m) {
+          // Couleur posée en linéaire : écrite telle quelle dans la cible (valeurs exactes)
+          const v = parseInt(hex.slice(1), 16);
+          const c = new THREE.Color().setRGB(((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255, THREE.LinearSRGBColorSpace);
+          m = new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide, toneMapped: false });
+          parCouleur.set(hex, m);
+          materiauxTemp.push(m);
+        }
+        materiauxOrigine.set(mesh, mesh.material);
+        mesh.material = m;
+      }
+    });
+    const ancienEspace = gl.outputColorSpace;
+    gl.outputColorSpace = THREE.LinearSRGBColorSpace; // couleurs exactes (pas de conversion sRGB)
+    gl.setRenderTarget(rtCarte);
+    gl.setClearColor(0x000000, 1);
+    gl.clear();
+    gl.render(scene, camera);
+    gl.outputColorSpace = ancienEspace;
+    const carte = lirePixels(gl, rtCarte, largeur, hauteur);
+
+    return { largeur, hauteur, couche, masqueScene, carte };
   } finally {
     for (const [mesh, mat] of materiauxOrigine) mesh.material = mat;
     if (massif) { scene.remove(massif); massif.geometry.dispose(); }
     for (const m of materiauxTemp) m.dispose();
     for (const o of masques) o.visible = true;
+    for (const o of reaffiches) o.visible = false;
     rtCouche.dispose();
     rtMasque.dispose();
+    rtCarte.dispose();
     gl.setRenderTarget(cibleInitiale);
     gl.setClearColor(couleurFond, alphaFond);
   }

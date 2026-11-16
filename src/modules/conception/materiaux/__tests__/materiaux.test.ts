@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { Element } from "../../types";
 import type { Pt } from "../../geo/plan";
 import {
-  quantitesMateriaux, quantiteElement, basculerCote, cotesExclus, segmentsLineaires, contoursMasqueMateriaux,
-  materiauCompatible, positionRelative, decrireMateriaux, coteProche, cotesApresInsertion, cotesApresSuppressionSommet,
+  quantitesMateriaux, quantiteElement, contoursMasqueMateriaux,
+  materiauCompatible, positionRelative, decrireMateriaux, coteProche, cotesApresSuppressionSommet,
   type Materiau, type ProjeterVue,
 } from "../materiaux";
 import { pointDansPolygone } from "../../geo/plan";
@@ -35,21 +35,6 @@ describe("quantités des matériaux", () => {
     expect(quantitesMateriaux([gazon], MATERIAUX)).toEqual([{ materiau: GAZON, quantite: 20, montant: 250, elements: 1 }]);
   });
 
-  it("un rectangle de 10 × 4 m dont on exclut un grand côté donne 18 ml", () => {
-    const r = el({ type: "rectangle", points: rect(0, 0, 10, 4) }, { materiau_id: "volige", cotes_exclus: [0] });
-    expect(quantiteElement(r, VOLIGE)).toBeCloseTo(18, 6);
-    // Sans exclusion : périmètre complet
-    expect(quantiteElement({ ...r, proprietes: { materiau_id: "volige" } }, VOLIGE)).toBeCloseTo(28, 6);
-  });
-
-  it("clic sur un côté : inclus ↔ exclu ; indices invalides ignorés", () => {
-    const r = el({ type: "rectangle", points: rect(0, 0, 10, 4) }, { materiau_id: "volige", cotes_exclus: [2, 9, 2, -1] });
-    expect(cotesExclus(r)).toEqual([2]);
-    expect(basculerCote(r, 0)).toEqual([0, 2]);
-    expect(basculerCote(r, 2)).toEqual([]);
-    expect(segmentsLineaires(r).length).toBe(3);
-  });
-
   it("clic près d'un côté : son indice ; loin, ou au-delà des extrémités : rien", () => {
     const r = el({ type: "rectangle", points: rect(0, 0, 10, 4) });
     expect(coteProche(r, [5, 0.1], 0.3)).toBe(0);
@@ -59,14 +44,7 @@ describe("quantités des matériaux", () => {
     expect(coteProche(r, [5, 2], 0.3)).toBeNull();
   });
 
-  it("ajout d'un sommet au milieu d'un côté exclu : les deux moitiés restent exclues (18 ml inchangés)", () => {
-    expect(cotesApresInsertion([0], 0)).toEqual([0, 1]);
-    expect(cotesApresInsertion([0, 2], 1)).toEqual([0, 3]);
-    const r = el({ type: "polygone", points: [[0, 0], [5, 0], [10, 0], [10, 4], [0, 4]] }, { materiau_id: "volige", cotes_exclus: cotesApresInsertion([0], 0) });
-    expect(quantiteElement(r, VOLIGE)).toBeCloseTo(18, 6);
-  });
-
-  it("suppression d'un sommet : côtés fusionnés exclus seulement si les deux l'étaient, renumérotation", () => {
+  it("suppression d'un sommet : côtés fusionnés gardés seulement si les deux l'étaient, renumérotation", () => {
     // Rectangle 4 sommets, côtés 0..3
     expect(cotesApresSuppressionSommet([0, 1], 1, 4)).toEqual([0]); // côtés 0 et 1 fusionnés, tous deux exclus
     expect(cotesApresSuppressionSommet([0], 1, 4)).toEqual([]); // un seul exclu : le côté fusionné est inclus
@@ -75,10 +53,9 @@ describe("quantités des matériaux", () => {
     expect(cotesApresSuppressionSommet([2], 0, 4)).toEqual([1]);
   });
 
-  it("cercle : aire en m², circonférence en ml", () => {
+  it("cercle : aire en m²", () => {
     const c = el({ type: "cercle", centre: [0, 0], rayon: 2 }, { materiau_id: "gazon" });
     expect(quantiteElement(c, GAZON)).toBeCloseTo(Math.PI * 4, 6);
-    expect(quantiteElement(c, VOLIGE)).toBeCloseTo(4 * Math.PI, 6);
   });
 
   it("totaux par matériau, ordre de la bibliothèque, éléments sans matériau ou supprimés ignorés", () => {
@@ -95,12 +72,12 @@ describe("quantités des matériaux", () => {
     ]);
   });
 
-  it("compatibilité : surface sur contour fermé, linéaire sur tracé ou contour", () => {
+  it("compatibilité : surface sur contour fermé, linéaire sur tracé (les bordures sont des tracés liés)", () => {
     const tracé = el({ type: "polyligne", points: [[0, 0], [1, 0]] }, {}, "limite");
     const poly = el({ type: "polygone", points: rect(0, 0, 1, 1) });
     expect(materiauCompatible(tracé, GAZON)).toBe(false);
     expect(materiauCompatible(tracé, VOLIGE)).toBe(true);
-    expect(materiauCompatible(poly, VOLIGE)).toBe(true);
+    expect(materiauCompatible(poly, VOLIGE)).toBe(false);
   });
 });
 
@@ -111,14 +88,14 @@ describe("masque du rendu : éléments portant un matériau", () => {
     expect(contours).toEqual([gazon.geometrie.type === "polygone" ? gazon.geometrie.points : []]);
   });
 
-  it("linéaire : bande d'au moins 30 cm le long des seuls côtés inclus", () => {
-    const r = el({ type: "rectangle", points: rect(0, 0, 10, 4) }, { materiau_id: "volige", cotes_exclus: [0] });
-    const bandes = contoursMasqueMateriaux([r], MATERIAUX);
-    expect(bandes.length).toBe(3);
+  it("linéaire : bande d'au moins 30 cm le long du tracé", () => {
+    const t = el({ type: "polyligne", points: [[0, 4], [10, 4], [10, 0]] }, { materiau_id: "volige" }, "limite");
+    const bandes = contoursMasqueMateriaux([t], MATERIAUX);
+    expect(bandes.length).toBe(2);
     const dans = (p: Pt) => bandes.some((b) => pointDansPolygone(p, b));
-    expect(dans([5, 4.1])).toBe(true); // côté nord, inclus (bande de 30 cm)
+    expect(dans([5, 4.1])).toBe(true);
     expect(dans([5, 4.2])).toBe(false);
-    expect(dans([5, 0])).toBe(false); // côté sud exclu
+    expect(dans([5, 0])).toBe(false);
     expect(dans([10.1, 2])).toBe(true);
   });
 });

@@ -64,6 +64,7 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
   const [erreur, setErreur] = useState<string | null>(null);
   const [aConfirmer, setAConfirmer] = useState<string | null>(null);
   const [depot, setDepot] = useState(false);
+  const [passesMateriaux, setPassesMateriaux] = useState(false);
 
   const refsStyle = references[style] ?? [];
   // Coût estimé : taille d'envoi au modèle (la vue entière est le cas le plus coûteux), références comprises
@@ -112,6 +113,10 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
     };
   }, [pdv.camera, pdv.largeur_px, pdv.hauteur_px, altitudeEn, donnees.vegetaux, donnees.zoneContour, elements, materiaux]);
 
+  // Matériaux visibles dans la vue : une passe chacun avec l'option (coût en plus, au plus une vue entière)
+  const nbMateriauxVue = new Set(contexteVue.materiaux.map((m) => m.nom)).size;
+  const coutPasses = passesMateriaux ? nbMateriauxVue * estimerCoutEdition(tailleVue.largeur, tailleVue.hauteur, refsStyle.length) : 0;
+
   const generer = useCallback(async () => {
     setErreur(null);
     setSecondes(0);
@@ -123,6 +128,7 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
       if (!capturer) throw new Error("La vue 3D n'est pas prête.");
       const cap = capturer(pdv.largeur_px, pdv.hauteur_px);
       const couchePng = await versPng(cap.couche, cap.largeur, cap.hauteur);
+      const cartePng = await versPng(cap.carte, cap.largeur, cap.hauteur);
       const masquePng = style === "realiste" ? await versPng(cap.masqueScene, cap.largeur, cap.hauteur) : null;
 
       setEnCours({ style, etape: "envoi", debut });
@@ -136,6 +142,10 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
       const stockage = createClient().storage.from("conception");
       const envoi1 = await stockage.uploadToSignedUrl(prep.couche.path, prep.couche.token, couchePng, { contentType: "image/png" });
       if (envoi1.error) throw new Error(envoi1.error.message);
+      if (prep.carte) {
+        const envoiCarte = await stockage.uploadToSignedUrl(prep.carte.path, prep.carte.token, cartePng, { contentType: "image/png" });
+        if (envoiCarte.error) throw new Error(envoiCarte.error.message);
+      }
       if (masquePng && prep.masqueScene) {
         const envoi2 = await stockage.uploadToSignedUrl(prep.masqueScene.path, prep.masqueScene.token, masquePng, { contentType: "image/png" });
         if (envoi2.error) throw new Error(envoi2.error.message);
@@ -148,6 +158,7 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
         body: JSON.stringify({
           renduId: prep.renduId, style, annotations: annotations && style === "croquis", consignesSup: consignesSup.trim(),
           materiaux: contexteVue.materiaux, plantesPrincipales: contexteVue.plantes,
+          passesMateriaux: passesMateriaux && nbMateriauxVue > 0,
         }),
       }).then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
       if (!res.ok) throw new Error(res.error ?? "La génération a échoué.");
@@ -157,7 +168,7 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
     } finally {
       setEnCours(null);
     }
-  }, [base, captureRef, charger, pdv.largeur_px, pdv.hauteur_px, style, annotations, consignesSup, contexteVue]);
+  }, [base, captureRef, charger, pdv.largeur_px, pdv.hauteur_px, style, annotations, consignesSup, contexteVue, passesMateriaux, nbMateriauxVue]);
 
   const deposerReference = useCallback(async (fichier: File) => {
     setErreur(null);
@@ -270,14 +281,23 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
 
         {contexteVue.materiaux.length > 0 && (
           <p className="text-stone text-[0.72rem] mb-2" data-testid="materiaux-rendu">
-            Matériaux décrits à l&apos;IA : {contexteVue.materiaux.map((m) => m.nom).join(", ")}
-            {style === "realiste" && " (inclus dans la zone retouchée)"}
+            Matériaux dessinés sur la vue et envoyés avec leur carte : {[...new Set(contexteVue.materiaux.map((m) => m.nom))].join(", ")}
           </p>
+        )}
+
+        {nbMateriauxVue > 0 && (
+          <label className="flex items-start gap-2 mb-3">
+            <input type="checkbox" className="mt-0.5" checked={passesMateriaux} disabled={occupe} onChange={(e) => setPassesMateriaux(e.target.checked)} data-testid="option-passes" />
+            <span>
+              Précision maximale : une passe par matériau ({nbMateriauxVue}), limitée à sa zone
+              <span className="block text-stone text-[0.72rem]">Si un matériau déborde encore. Coût en plus : jusqu&apos;à {formaterEuros(nbMateriauxVue * estimerCoutEdition(tailleVue.largeur, tailleVue.hauteur, refsStyle.length))}.</span>
+            </span>
+          </label>
         )}
 
         <div className="flex items-center gap-3">
           <button className={bouton} disabled={occupe || depot} onClick={generer} data-testid="btn-generer">Générer</button>
-          <span className="text-stone" data-testid="cout-estime">{style === "realiste" ? "Jusqu'à " : "≈ "}{formaterEuros(coutVue)}</span>
+          <span className="text-stone" data-testid="cout-estime">{style === "realiste" || passesMateriaux ? "Jusqu'à " : "≈ "}{formaterEuros(coutVue + coutPasses)}</span>
         </div>
         {estDessine(style) && <p className="text-brass mt-1" data-testid="mention-dessin-ia">{MENTION_DESSIN_IA}</p>}
 

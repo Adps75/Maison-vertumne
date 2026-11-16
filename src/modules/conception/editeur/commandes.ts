@@ -16,6 +16,8 @@ export const COMMANDES: Record<string, NomOutil> = {
   PLA: "planter",
   PC: "point_cote",
   REF: "ref",
+  DEC: "decouper",
+  BOR: "bordure",
 };
 
 /**

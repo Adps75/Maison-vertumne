@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { consigneRendu, consigneStyle, plantesPrincipales, STYLES, STYLE_DEFAUT, LIBELLES_STYLES, type OptionsConsigne } from "../styles";
+import { consigneRendu, consigneStyle, consignePasse, plantesPrincipales, STYLES, STYLE_DEFAUT, LIBELLES_STYLES, type OptionsConsigne } from "../styles";
 
 const base: OptionsConsigne = {
   style: "croquis", nbReferences: 2, annotations: false, plantesPrincipales: ["Gaura", "Perovskia"], materiaux: [], consignesSup: "",
@@ -34,10 +34,31 @@ describe("styles prédéfinis du rendu", () => {
     expect(consigneRendu(base)).toBe(consigneRendu({ ...base }));
   });
 
-  it("matériaux : décrits avec quantité et position ; dans la zone éditée pour le réaliste", () => {
+  it("matériaux sans carte : quantité et description, jamais de position décrite en mots", () => {
     const m = [{ nom: "Volige acier", description: "lame d'acier", quantite: 12.5, unite: "ml" as const, position: "devant le massif, au premier plan" }];
-    expect(consigneRendu({ ...base, materiaux: m })).toContain("- Volige acier (12,5 ml, devant le massif, au premier plan) : lame d'acier");
+    const c = consigneRendu({ ...base, materiaux: m });
+    expect(c).toContain("- Volige acier (12,5 ml) : lame d'acier");
+    expect(c).not.toContain("premier plan");
     expect(consigneRendu({ ...base, style: "realiste", materiaux: m })).toMatch(/Inside the transparent area, also render these project materials/);
+  });
+
+  it("carte des matériaux : deuxième image, chaque matériau uniquement dans sa zone, légende par couleur", () => {
+    const carte = [{ nom: "Paillage écorce de pin", couleur: "rouge", description: "écorce de pin brun-rouge" }];
+    const c = consigneRendu({ ...base, carte, materiaux: [{ nom: "Paillage écorce de pin", description: "x", quantite: 53.6, unite: "m2", position: "devant le massif" }] });
+    expect(c).toMatch(/SECOND image is a MATERIAL MAP/);
+    expect(c).toMatch(/each material only inside its coloured zone/);
+    expect(c).toContain("- red = Paillage écorce de pin : écorce de pin brun-rouge");
+    expect(c).not.toContain("devant le massif");
+    // La partie style ne dépend pas de la carte : identique d'une vue à l'autre
+    expect(c.startsWith(consigneStyle("croquis", 2))).toBe(true);
+    expect(consigneStyle("croquis", 2)).toMatch(/LAST 2 images are STYLE REFERENCES/);
+  });
+
+  it("passe par matériau : seulement la zone transparente, bords conservés", () => {
+    const c = consignePasse("croquis", { nom: "Gazon (rénovation)", description: "gazon dense" });
+    expect(c).toMatch(/Edit ONLY the transparent/);
+    expect(c).toContain("« Gazon (rénovation) » (gazon dense)");
+    expect(c).toMatch(/do not draw it outside the transparent area/);
   });
 
   it("annotations : croquis seulement, noms des plantes principales avec une flèche ; sinon aucun texte", () => {

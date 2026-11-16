@@ -22,7 +22,8 @@ import type { Pt } from "../geo/plan";
 import { surface as surfacePoly } from "../geo/plan";
 import { extrairePoignees, type Poignee } from "../editeur/poignees";
 import { deplacerGeometrie } from "../editeur/transformation";
-import { contourFerme, cotesExclus, materiauDe, type Materiau } from "../materiaux/materiaux";
+import { contourFerme, materiauDe, type Materiau } from "../materiaux/materiaux";
+import type { SurbrillanceCotes } from "../editeur/outils-materiaux";
 
 interface Batiment {
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
@@ -67,6 +68,8 @@ interface Props {
   onSelectPdv?: (id: string) => void;
   /** Matériaux de l'atelier : rendu des tracés et surfaces qui en portent un. */
   materiaux?: Materiau[];
+  /** Outil Bordure : côtés de la surface en cours (choisis, déjà bordés, libres). */
+  surbrillanceCotes?: SurbrillanceCotes | null;
 }
 
 const LAITON = "#9C7C3C";
@@ -107,6 +110,7 @@ export function CanevasEditeur({
   pointsDeVue,
   onSelectPdv,
   materiaux = [],
+  surbrillanceCotes = null,
 }: Props) {
   const materiauxParId = new Map(materiaux.map((m) => [m.id, m]));
   const containerRef = useRef<HTMLDivElement>(null);
@@ -565,6 +569,21 @@ export function CanevasEditeur({
             const materiau = materiauDe(el, materiauxParId);
             if (materiau) return renderAvecMateriau(el, materiau, selected ? SELECTION : null, strokeW, zoom, opaciteDrag);
             return renderElement(el, color, strokeW, zoom, undefined, opaciteDrag);
+          })}
+
+          {/* Outil Bordure : côtés de la surface (libres en pointillés, choisis en laiton, déjà bordés en gris) */}
+          {surbrillanceCotes && surbrillanceCotes.contour.map((a, i) => {
+            const c = surbrillanceCotes.contour;
+            const b = c[(i + 1) % c.length];
+            const pts = coordonneesVersEcran([a, b]);
+            const choisi = surbrillanceCotes.choisis.includes(i);
+            const occupe = surbrillanceCotes.occupes.includes(i);
+            return (
+              <Line key={`cote-${i}`} points={pts} listening={false} strokeScaleEnabled={false} lineCap="round"
+                stroke={choisi ? LAITON : occupe ? "#857C6E" : SELECTION}
+                strokeWidth={choisi ? 6 : occupe ? 2 : 3}
+                dash={choisi ? undefined : [8, 6]} />
+            );
           })}
 
           {/* Zones de travail — contour pointillé laiton + nom au centroïde */}
@@ -1026,8 +1045,8 @@ function motifMateriau(m: Materiau): HTMLCanvasElement | null {
 
 /**
  * Élément portant un matériau : surface remplie à la couleur et la hachure du matériau ;
- * linéaire en trait épais à sa couleur (largeur réelle, 3 px au moins) ; linéaire posé
- * sur une surface : côtés inclus en trait plein, côtés exclus en pointillés.
+ * linéaire (tracé libre ou bordure) en trait épais à sa couleur et sa largeur réelle
+ * (3 px au moins).
  */
 function renderAvecMateriau(el: Element, m: Materiau, couleurSelection: string | null, sw: number, zoom: number, opacity = 1): React.ReactNode {
   const key = el.id;
@@ -1043,28 +1062,13 @@ function renderAvecMateriau(el: Element, m: Materiau, couleurSelection: string |
       </Group>
     );
   }
+  if (el.geometrie.type !== "polyligne") return null;
   const epaisseur = Math.max(3, (m.largeur_m ?? 0) * zoom);
-  const exclus = new Set(cotesExclus(el));
-  const segments: { a: Pt; b: Pt; exclu: boolean }[] = [];
-  if (el.geometrie.type === "polyligne") {
-    const p = el.geometrie.points;
-    for (let i = 0; i < p.length - 1; i++) segments.push({ a: p[i], b: p[i + 1], exclu: false });
-  } else if (contour) {
-    for (let i = 0; i < contour.length; i++) segments.push({ a: contour[i], b: contour[(i + 1) % contour.length], exclu: exclus.has(i) });
-  }
+  const pts = coordonneesVersEcran(el.geometrie.points);
   return (
     <Group key={key} opacity={opacity}>
-      {segments.map((s, i) => {
-        const pts = coordonneesVersEcran([s.a, s.b]);
-        return s.exclu ? (
-          <Line key={i} points={pts} stroke={couleurSelection ?? m.couleur} strokeWidth={1.5} dash={[6, 5]} strokeScaleEnabled={false} listening={false} />
-        ) : (
-          <Group key={i}>
-            <Line points={pts} stroke="rgba(0,0,0,0.35)" strokeWidth={epaisseur + 2} lineCap="round" strokeScaleEnabled={false} listening={false} />
-            <Line points={pts} stroke={couleurSelection ?? m.couleur} strokeWidth={epaisseur} lineCap="round" strokeScaleEnabled={false} listening={false} />
-          </Group>
-        );
-      })}
+      <Line points={pts} stroke="rgba(0,0,0,0.35)" strokeWidth={epaisseur + 2} lineCap="round" lineJoin="round" strokeScaleEnabled={false} listening={false} />
+      <Line points={pts} stroke={couleurSelection ?? m.couleur} strokeWidth={epaisseur} lineCap="round" lineJoin="round" strokeScaleEnabled={false} listening={false} />
     </Group>
   );
 }

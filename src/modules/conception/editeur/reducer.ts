@@ -11,6 +11,8 @@ import type {
 } from "../types";
 import type { Pt } from "../geo/plan";
 import { Historique } from "./historique";
+import { propagerBordures, borduresDe, type ChangementContour } from "../materiaux/bordures";
+import { genererIdLocal } from "@/lib/id-client";
 
 // ===================== Actions =====================
 
@@ -22,7 +24,12 @@ export type Action =
   | { type: "CREER_ELEMENT"; element: Element }
   /** Composition IA : ajoute des plantes et retire celles d'une composition remplacée, en UNE action annulable. */
   | { type: "APPLIQUER_COMPOSITION"; ajouts: Element[]; suppressions: string[] }
-  | { type: "MODIFIER_ELEMENTS"; elements: Element[] }
+  /**
+   * Modification d'éléments (une action annulable). Les bordures liées aux surfaces
+   * modifiées suivent leur contour ; `changementsContour` précise un sommet inséré ou
+   * supprimé ; `suppressions` retire des éléments dans la même action (ex. découpe).
+   */
+  | { type: "MODIFIER_ELEMENTS"; elements: Element[]; changementsContour?: Record<string, ChangementContour>; suppressions?: string[] }
   | { type: "SUPPRIMER_SELECTION" }
   | { type: "SELECTIONNER"; ids: string[]; ajouter?: boolean }
   | { type: "DESELECTIONNER" }
@@ -36,6 +43,8 @@ export type Action =
   | { type: "CALQUE_COULEUR"; nom: string; couleur: string }
   | { type: "OPACITE_ORTHO"; opacite: number }
   | { type: "SAISIE"; texte: string }
+  /** Message de la barre de commande, sans changer d'outil ni de sélection. */
+  | { type: "MESSAGE"; texte: string }
   | { type: "CHARGER_ELEMENTS"; elements: Element[] }
   | { type: "MARQUER_SAUVEGARDE" }
   | { type: "CHANGER_ETAPE"; etape: NumeroEtape }
@@ -182,19 +191,29 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       const elements = new Map(etat.elements);
       const avant: Element[] = [];
 
-      for (const el of action.elements) {
+      // Bordures liées aux surfaces modifiées : recalculées dans la même action
+      const bordures = propagerBordures({
+        elements: etat.elements, modifies: action.elements, changements: action.changementsContour, genererId: genererIdLocal,
+        ignorer: action.suppressions,
+      });
+      const apres = [...action.elements, ...bordures.majs];
+      const suppressions = [...new Set([...(action.suppressions ?? []), ...bordures.suppressions])];
+
+      for (const el of apres) {
         const existant = elements.get(el.id);
         if (existant) avant.push(existant);
         elements.set(el.id, el);
         changements.upserts.push(el);
       }
+      for (const id of suppressions) {
+        const el = elements.get(id);
+        if (!el) continue;
+        if (!avant.some((a) => a.id === id)) avant.push(el);
+        elements.delete(id);
+        changements.suppressions.push(id);
+      }
 
-      historiqueEtape(etat.etape).push({
-        type: "modifier",
-        avant,
-        apres: action.elements,
-        suppressions: [],
-      });
+      historiqueEtape(etat.etape).push({ type: "modifier", avant, apres, suppressions });
 
       return { ...etat, elements };
     }
@@ -206,7 +225,9 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
       const avant: Element[] = [];
       const ids: string[] = [];
 
-      for (const id of etat.selection) {
+      // Les bordures d'une surface supprimée sont supprimées avec elle
+      const aSupprimer = new Set([...etat.selection, ...borduresDe(etat.elements.values(), etat.selection)]);
+      for (const id of aSupprimer) {
         const el = elements.get(id);
         if (el) {
           avant.push(el);
@@ -250,9 +271,13 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
         }
       }
 
-      // Annuler les modifications
+      // Annuler les modifications (les éléments créés par la modification sont retirés)
       if (action_hist.type === "modifier") {
-        for (const el of action_hist.apres) elements.delete(el.id);
+        const avantIds = new Set(action_hist.avant.map((e) => e.id));
+        for (const el of action_hist.apres) {
+          elements.delete(el.id);
+          if (!avantIds.has(el.id)) changements.suppressions.push(el.id);
+        }
         for (const el of action_hist.avant) {
           elements.set(el.id, el);
           changements.upserts.push(el);
@@ -320,6 +345,9 @@ export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {
 
     case "OPACITE_ORTHO":
       return { ...etat, opaciteOrtho: action.opacite };
+
+    case "MESSAGE":
+      return { ...etat, messageCommande: action.texte };
 
     case "SAISIE":
       return { ...etat, saisie: action.texte };
@@ -398,6 +426,8 @@ function messageOutil(outil: NomOutil): string {
     zone_polygone: "Zone polygone : cliquez les sommets, Entrée pour terminer",
     point_cote: "PC : cliquez pour poser un point coté",
     ref: "REF : cliquez pour définir le 0,00",
+    decouper: "DEC : cliquez la surface à découper",
+    bordure: "BOR : cliquez la surface à border",
   };
   return messages[outil] ?? "Prêt";
 }

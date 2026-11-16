@@ -13,13 +13,13 @@ export async function DELETE(_request: Request, { params }: { params: Params }) 
     }
     const { data: rendu } = await supabase
       .from("conception_rendus")
-      .select("image_path, masque_path")
+      .select("image_path, masque_path, carte_path")
       .eq("id", renduId)
       .eq("point_de_vue_id", pdvId)
       .single();
     if (!rendu) return NextResponse.json({ ok: false, error: "Rendu introuvable." }, { status: 404 });
 
-    await supprimerFichiersRendus(supabase, [rendu as Pick<LigneRendu, "image_path" | "masque_path">]);
+    await supprimerFichiersRendus(supabase, [rendu as Pick<LigneRendu, "image_path" | "masque_path" | "carte_path">]);
     const { error } = await supabase.from("conception_rendus").delete().eq("id", renduId);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });

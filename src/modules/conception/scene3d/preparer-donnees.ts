@@ -7,7 +7,8 @@ import { cercleVersPolygone } from "../geo/plan";
 import { emprise3D, type Batiment3D } from "../geo/emprise3d";
 import type { Element } from "../types";
 import type { DonneesScene3D, Surface3D, Vegetal3D, PointCote3D, Masquant3D, FormeMasquant } from "./types";
-import { contoursMasqueMateriaux, materiauDe, type Materiau } from "../materiaux/materiaux";
+import { contoursMasqueMateriaux, contourFerme, couleursCarte, materiauDe, urlTexture, type Materiau } from "../materiaux/materiaux";
+import type { SurfaceMateriau3D, LineaireMateriau3D } from "./types";
 
 const FORMES_MASQUANT: FormeMasquant[] = ["cone", "boule", "colonne", "haie", "arbre"];
 
@@ -156,10 +157,33 @@ export function preparerDonneesScene(
     vegetaux,
     masquants,
     contoursMateriaux: contoursMasqueMateriaux(elements, materiaux),
+    materiaux3D: materiauxEnScene(elements, materiauxParId, emprise),
+    couleursCarte: Object.fromEntries([...couleursCarte(materiaux)].map(([id, c]) => [id, c.hex])),
     altitudeEn: altitudeEn ?? null,
     pointsCotes,
     zoneContour,
   };
+}
+
+/** Surfaces et linéaires portant un matériau, dans l'emprise de la scène. */
+function materiauxEnScene(elements: Element[], materiaux: Map<string, Materiau>, emprise: [number, number, number, number]) {
+  const surfaces: SurfaceMateriau3D[] = [];
+  const lineaires: LineaireMateriau3D[] = [];
+  for (const el of elements) {
+    if (el.statut === "supprime") continue;
+    const m = materiauDe(el, materiaux);
+    if (!m) continue;
+    if (m.type === "surface") {
+      const points = contourFerme(el);
+      if (!points || !pointsDansEmprise(points, emprise)) continue;
+      surfaces.push({ id: el.id, points, materiauId: m.id, couleur: m.couleur, textureUrl: urlTexture(m), tailleTexture: m.texture_taille_m ?? 0.5 });
+    } else if (el.geometrie.type === "polyligne") {
+      const points = el.geometrie.points;
+      if (!pointsDansEmprise(points, emprise)) continue;
+      lineaires.push({ id: el.id, points, materiauId: m.id, couleur: m.couleur, largeur: Math.max(0.02, m.largeur_m ?? 0.03), hauteur: m.hauteur_m ?? 0.05 });
+    }
+  }
+  return { surfaces, lineaires };
 }
 
 /** Détermine les points de la zone à visualiser. */

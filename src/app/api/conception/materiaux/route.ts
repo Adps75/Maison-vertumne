@@ -15,6 +15,8 @@ export async function GET() {
       ...m,
       prix_unitaire: m.prix_unitaire == null ? null : Number(m.prix_unitaire),
       largeur_m: m.largeur_m == null ? null : Number(m.largeur_m),
+      texture_taille_m: m.texture_taille_m == null ? null : Number(m.texture_taille_m),
+      hauteur_m: m.hauteur_m == null ? null : Number(m.hauteur_m),
     }));
     return NextResponse.json({ ok: true, materiaux });
   } catch (e) {

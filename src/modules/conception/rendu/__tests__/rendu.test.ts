@@ -9,7 +9,7 @@ import { tailleModele, recadrageAutour, PIXELS_MIN_MODELE, COTE_MAX_MODELE } fro
 import { recoller } from "../recollage";
 import { filtreDessin } from "../filtre-dessin";
 import { estimerCoutEdition } from "../cout";
-import { rendreRealiste, rendreDessinIA, rendreDessinFiltre, decoder, encoderPng, type Editeur } from "../pipeline";
+import { rendreRealiste, rendreDessinIA, rendreDessinFiltre, passesParMateriau, decoder, encoderPng, type Editeur } from "../pipeline";
 import { consigneStyle } from "../styles";
 
 // ─── Scène synthétique ────────────────────────────────────────────────
@@ -319,6 +319,25 @@ describe("chaîne de rendu avec fournisseur simulé", () => {
     expect(r.image.largeur).toBe(L);
     expect(r.image.hauteur).toBe(H);
     expect(r.usage).toBeNull();
+  });
+
+  it("passes par matériau : un appel par matériau présent, rien ne change hors de sa zone", async () => {
+    const editer = fournisseurSimule();
+    const image = photo();
+    const carte = creerImage(L, H);
+    // Matériau rouge sur une bande centrale ; vert absent de la carte
+    for (let y = 20; y < 40; y++) for (let x = 30; x < 90; x++) carte.donnees.set([255, 0, 0, 255], (y * L + x) * 4);
+    const r = await passesParMateriau({
+      image, carte, editer, consigne: (m) => `PASSE ${m.nom}`,
+      materiaux: [{ nom: "Paillage", description: "écorce", rgb: [255, 0, 0] }, { nom: "Gazon", description: "gazon", rgb: [0, 255, 0] }],
+    });
+    expect(editer).toHaveBeenCalledTimes(1);
+    expect(editer.mock.calls[0][0]).toBe("PASSE Paillage");
+    expect(r.usages.length).toBe(1);
+    const px = (img: typeof image, x: number, y: number) => Array.from(img.donnees.slice((y * L + x) * 4, (y * L + x) * 4 + 3));
+    expect(px(r.image, 5, 5)).toEqual(px(image, 5, 5)); // hors zone : identique
+    expect(px(r.image, 25, 30)).toEqual(px(image, 25, 30)); // 5 px hors du bord : identique
+    expect(px(r.image, 60, 30)).not.toEqual(px(image, 60, 30)); // dans la zone : modifié
   });
 
   it("encodage PNG aller-retour sans perte", async () => {

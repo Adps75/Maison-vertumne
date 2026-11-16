@@ -4,7 +4,7 @@ import { BUCKET, chargerPointDeVue } from "@/modules/conception/serveur/rendus-s
 
 type Params = Promise<{ id: string; pdvId: string; renduId: string }>;
 
-/** Image d'un rendu (PNG pleine résolution), ou son masque avec ?type=masque. */
+/** Image d'un rendu (PNG pleine résolution), son masque (?type=masque) ou sa carte des matériaux (?type=carte). */
 export async function GET(request: Request, { params }: { params: Params }) {
   try {
     const { supabase } = await exigerAdmin("api");
@@ -14,12 +14,12 @@ export async function GET(request: Request, { params }: { params: Params }) {
     }
     const { data: rendu } = await supabase
       .from("conception_rendus")
-      .select("image_path, masque_path")
+      .select("image_path, masque_path, carte_path")
       .eq("id", renduId)
       .eq("point_de_vue_id", pdvId)
       .single();
-    const masque = new URL(request.url).searchParams.get("type") === "masque";
-    const path = masque ? rendu?.masque_path : rendu?.image_path;
+    const type = new URL(request.url).searchParams.get("type");
+    const path = type === "masque" ? rendu?.masque_path : type === "carte" ? rendu?.carte_path : rendu?.image_path;
     if (!path) return NextResponse.json({ error: "Image absente." }, { status: 404 });
 
     const { data, error } = await supabase.storage.from(BUCKET).download(path);

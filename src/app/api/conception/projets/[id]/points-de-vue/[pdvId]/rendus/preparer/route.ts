@@ -20,7 +20,7 @@ export async function POST(request: Request, { params }: { params: Params }) {
 
     const renduId = crypto.randomUUID();
     const chemins = cheminsRendu(id, renduId);
-    const aSigner = corps.data.style === "realiste" ? [chemins.couche, chemins.masqueScene] : [chemins.couche];
+    const aSigner = corps.data.style === "realiste" ? [chemins.couche, chemins.carte, chemins.masqueScene] : [chemins.couche, chemins.carte];
 
     const envois: { path: string; token: string }[] = [];
     for (const path of aSigner) {
@@ -29,7 +29,7 @@ export async function POST(request: Request, { params }: { params: Params }) {
       envois.push({ path: data.path, token: data.token });
     }
 
-    return NextResponse.json({ ok: true, renduId, couche: envois[0], masqueScene: envois[1] ?? null });
+    return NextResponse.json({ ok: true, renduId, couche: envois[0], carte: envois[1], masqueScene: envois[2] ?? null });
   } catch (e) {
     if (e instanceof ErreurNonAutorise) return NextResponse.json({ ok: false, error: e.message }, { status: e.status });
     throw e;

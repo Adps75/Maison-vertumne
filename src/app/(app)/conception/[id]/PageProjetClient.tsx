@@ -58,9 +58,8 @@ import {
   trouverPoignee,
   type Poignee,
 } from "@/modules/conception/editeur/poignees";
-import {
-  basculerCote, coteProche, cotesExclus, cotesApresInsertion, cotesApresSuppressionSommet, materiauDe, type Materiau,
-} from "@/modules/conception/materiaux/materiaux";
+import type { Materiau } from "@/modules/conception/materiaux/materiaux";
+import { useOutilsMateriaux } from "@/modules/conception/editeur/outils-materiaux";
 import { STYLES, STYLE_DEFAUT, type StyleProjet } from "@/modules/conception/rendu/styles";
 import { PanneauMateriaux } from "@/modules/conception/composants/PanneauMateriaux";
 
@@ -158,6 +157,11 @@ export function PageProjetClient() {
   const [rectDebut, setRectDebut] = useState<Pt | null>(null);
   const rectFinRef = useRef<Pt | null>(null);
   const shiftKeyRef = useRef(false);
+  // Outils Découper (DEC) et Bordure (BOR) de l'étape 3
+  const outilsMat = useOutilsMateriaux({ etat, dispatch, materiaux, zoomRef });
+  // Les gestionnaires d'événements lisent toujours la version courante des outils
+  const outilsMatRef = useRef(outilsMat);
+  useEffect(() => { outilsMatRef.current = outilsMat; });
 
   // Poignées
   const [poigneeActive, setPoigneeActive] = useState<Poignee | null>(null);
@@ -399,6 +403,7 @@ export function PageProjetClient() {
   // Mouvement du pointeur — met à jour les refs sans re-render
   const onPointerMoveHandler = useCallback(
     (terrainPt: Pt) => {
+      outilsMatRef.current.surPointerMove(terrainPt);
 
       let pt = terrainPt;
 
@@ -484,6 +489,12 @@ export function PageProjetClient() {
   // Pointer down — enregistre le point pour distinguer clic/drag
   const onPointerDownHandler = useCallback(
     (pt: Pt) => {
+      // Outil Bordure : choix de la surface et des côtés (glisser le long du contour)
+      if (outilsMatRef.current.surPointerDown(pt, shiftKeyRef.current)) {
+        pointerDownPtRef.current = null;
+        pointerDownElementRef.current = null;
+        return;
+      }
 
 
       // Pas de drag pendant un tracé en cours
@@ -506,20 +517,6 @@ export function PageProjetClient() {
           poigneePreviewRef.current = pt;
           return;
         }
-        // Matériau linéaire posé sur une surface : clic sur un côté = l'exclure / le réinclure
-        if (selectedEls.length === 1) {
-          const el = selectedEls[0];
-          const m = materiauDe(el, new Map(materiaux.map((x) => [x.id, x])));
-          if (m?.type === "lineaire") {
-            const cote = coteProche(el, pt, 8 / zoomRef.current);
-            if (cote !== null) {
-              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, proprietes: { ...el.proprietes, cotes_exclus: basculerCote(el, cote) } }] });
-              pointerDownPtRef.current = null;
-              pointerDownElementRef.current = null;
-              return;
-            }
-          }
-        }
       }
 
       // Tester si on est sur un élément sélectionnable (pour drag potentiel)
@@ -529,13 +526,16 @@ export function PageProjetClient() {
       pointerDownPtRef.current = pt;
       pointerDownElementRef.current = touche?.id ?? null;
     },
-    [etat.outil, etat.selection, etat.elements, etat.calques, etat.etape, materiaux],
+    [etat.outil, etat.selection, etat.elements, etat.calques, etat.etape],
   );
 
   // Clic sur le canevas
   const onClicCanevas = useCallback(
     (terrainPt: Pt) => {
       const pt = curseurRef.current; // Utilise le point après accrochage/ortho
+
+      // Outil Découper : surface puis points de la ligne de coupe
+      if (outilsMatRef.current.surClic(pt)) return;
 
       switch (etat.outil) {
         case "polyligne":
@@ -726,14 +726,23 @@ export function PageProjetClient() {
               setPhaseEdition("selection");
               dispatch({ type: "CHANGER_OUTIL", outil: "selection" });
             } else {
-              // Copier : créer les copies, rester actif pour plusieurs copies
+              // Copier : créer les copies, rester actif pour plusieurs copies. Une bordure copiée
+              // avec sa surface reste liée à la copie ; copiée seule, elle devient un tracé libre.
+              const nouveauxIds = new Map(modifies.map((el) => [el.id, genererIdLocal()]));
               modifies.forEach((el) => {
+                const proprietes = { ...el.proprietes };
+                if (typeof proprietes.bordure_de === "string") {
+                  const surfaceCopiee = nouveauxIds.get(proprietes.bordure_de);
+                  if (surfaceCopiee) proprietes.bordure_de = surfaceCopiee;
+                  else { delete proprietes.bordure_de; delete proprietes.cotes; }
+                }
                 dispatch({
                   type: "CREER_ELEMENT",
                   element: {
                     ...el,
-                    id: genererIdLocal(),
+                    id: nouveauxIds.get(el.id)!,
                     geometrie: copierGeometrie(el.geometrie, dx, dy),
+                    proprietes,
                   },
                 });
               });
@@ -964,6 +973,7 @@ export function PageProjetClient() {
   // Pointer up — fin de glissement, drag, rectangle de sélection, ou clic
   const onPointerUpHandler = useCallback(
     (pt: Pt, altKey: boolean) => {
+      outilsMatRef.current.surPointerUp();
 
       const finalPt = curseurRef.current;
 
@@ -980,12 +990,11 @@ export function PageProjetClient() {
           } else {
             const nouvelleGeom = appliquerDeplacementPoignee(el.geometrie, poigneeActive, finalPt);
             if (nouvelleGeom) {
-              // Sommet inséré au milieu d'un côté : côtés exclus d'un matériau linéaire renumérotés
-              const exclus = cotesExclus(el);
-              const proprietes = poigneeActive.type === "milieu" && exclus.length > 0 && (el.geometrie.type === "polygone" || el.geometrie.type === "rectangle")
-                ? { ...el.proprietes, cotes_exclus: cotesApresInsertion(exclus, poigneeActive.index) }
-                : el.proprietes;
-              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: nouvelleGeom, proprietes }] });
+              // Sommet inséré au milieu d'un côté : les bordures liées renumérotent leurs côtés
+              const changementsContour = poigneeActive.type === "milieu" && (el.geometrie.type === "polygone" || el.geometrie.type === "rectangle")
+                ? { [el.id]: { type: "insertion" as const, cote: poigneeActive.index } }
+                : undefined;
+              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: nouvelleGeom }], changementsContour });
             }
           }
         }
@@ -1096,6 +1105,8 @@ export function PageProjetClient() {
   // Saisie Entrée/Espace
   const onEntreeSaisie = useCallback(
     (texte: string) => {
+      // Entrée sans saisie : créer la bordure ou découper
+      if (texte.trim() === "" && outilsMatRef.current.surEntree()) return;
       // Saisie de l'altitude d'un point coté en cours
       if (pointCoteEnCours) {
         const val = normaliserNombre(texte.trim());
@@ -1304,6 +1315,7 @@ export function PageProjetClient() {
 
       // Touches spéciales directes
       if (e.key === "Escape") {
+        outilsMatRef.current.surEchap();
         dispatch({ type: "ANNULER_TRACE" });
         setSommetSelectionne(null);
         setPoigneeActive(null);
@@ -1319,12 +1331,11 @@ export function PageProjetClient() {
           if (el) {
             const result = supprimerSommet(el.geometrie, sommetSelectionne.index);
             if (result) {
-              // Côtés exclus d'un matériau linéaire : les deux côtés du sommet fusionnent
-              const exclus = cotesExclus(el);
-              const proprietes = exclus.length > 0 && (el.geometrie.type === "polygone" || el.geometrie.type === "rectangle")
-                ? { ...el.proprietes, cotes_exclus: cotesApresSuppressionSommet(exclus, sommetSelectionne.index, el.geometrie.points.length) }
-                : el.proprietes;
-              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: result, proprietes }] });
+              // Bordures liées : les deux côtés du sommet supprimé fusionnent
+              const changementsContour = el.geometrie.type === "polygone" || el.geometrie.type === "rectangle"
+                ? { [el.id]: { type: "suppression" as const, sommet: sommetSelectionne.index, nAvant: el.geometrie.points.length } }
+                : undefined;
+              dispatch({ type: "MODIFIER_ELEMENTS", elements: [{ ...el, geometrie: result }], changementsContour });
               setSommetSelectionne(null);
             }
           }
@@ -1665,6 +1676,7 @@ export function PageProjetClient() {
         {/* Éditeur 2D — visible à toutes les étapes */}
         <CanevasEditeur
             materiaux={materiaux}
+            surbrillanceCotes={outilsMat.surbrillance}
             parcelles={projet.parcelles_geojson}
             batiments={projet.batiments_geojson ?? []}
             orthoUrl={projet.ortho_url}
@@ -1727,6 +1739,9 @@ export function PageProjetClient() {
             )}
             {etat.etape === 3 && (
               <PanneauMateriaux materiaux={materiaux} elements={etat.elements} onPrixModifie={rechargerMateriaux} />
+            )}
+            {etat.etape === 3 && outilsMat.panneau && (
+              <>{outilsMat.panneau}</>
             )}
 
             <PanneauInfos selection={selectionElements} materiaux={materiaux} onModifier={(el) => dispatch({ type: "MODIFIER_ELEMENTS", elements: [el] })} />

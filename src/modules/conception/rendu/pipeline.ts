@@ -13,6 +13,7 @@ import { boiteEnglobante, fusionnerMasqueBrut, masqueFinal, masquePourApi } from
 import { recadrageAutour, tailleModele } from "./recadrage";
 import { recoller } from "./recollage";
 import { filtreDessin } from "./filtre-dessin";
+import { masqueCouleur } from "./carte";
 
 export interface UsageModele {
   input_tokens: number;
@@ -99,10 +100,13 @@ export async function rendreRealiste(params: {
   editer: Editeur;
   consigne: string;
   references?: Buffer[];
+  /** Carte des matériaux (même cadrage que la photo), envoyée juste après la scène. */
+  carte?: ImageRGBA | null;
 }): Promise<ResultatRendu> {
   const { photo, editer } = params;
   const couche = await alignerSurPhoto(photo, params.couche);
   const masqueScene = await redimensionnerMasque(params.masqueScene, photo.largeur, photo.hauteur);
+  const carte = params.carte ? await redimensionner(params.carte, photo.largeur, photo.hauteur) : null;
 
   const masque = masqueFinal(fusionnerMasqueBrut(masqueScene, couche));
   const boite = boiteEnglobante(masque);
@@ -115,10 +119,12 @@ export async function rendreRealiste(params: {
   const imageEnvoi = await redimensionner(extraireRect(vue, rect), taille.largeur, taille.hauteur);
   const masqueEnvoi = await redimensionnerMasque(extraireRectMasque(masque, rect), taille.largeur, taille.hauteur);
 
+  // Carte recadrée comme la scène : mêmes pixels, même cadrage
+  const carteEnvoi = carte ? [await encoderPng(await redimensionner(extraireRect(carte, rect), taille.largeur, taille.hauteur))] : [];
   const reponse = await editer(params.consigne, await encoderPng(imageEnvoi), {
     masquePng: await encoderPng(masquePourApi(masqueEnvoi)),
     taille: `${taille.largeur}x${taille.hauteur}`,
-    references: params.references,
+    references: [...carteEnvoi, ...(params.references ?? [])],
   });
 
   const resultat = await redimensionner(await decoder(reponse.buffer), rect.largeur, rect.hauteur);
@@ -132,16 +138,55 @@ export async function rendreDessinFiltre(params: { photo: ImageRGBA; couche: Ima
 }
 
 /** Style dessiné (croquis, aquarelle, feutres) : stylisation de toute la vue, éléments et positions conservés. */
-export async function rendreDessinIA(params: { photo: ImageRGBA; couche: ImageRGBA; editer: Editeur; consigne: string; references?: Buffer[] }): Promise<ResultatRendu> {
+export async function rendreDessinIA(params: {
+  photo: ImageRGBA; couche: ImageRGBA; editer: Editeur; consigne: string; references?: Buffer[]; carte?: ImageRGBA | null;
+}): Promise<ResultatRendu> {
   const { photo, editer } = params;
   const couche = await alignerSurPhoto(photo, params.couche);
   const vue = superposer(photo, couche);
   const taille = tailleModele(photo.largeur, photo.hauteur);
   const envoi = await redimensionner(vue, taille.largeur, taille.hauteur);
+  const carteEnvoi = params.carte ? [await encoderPng(await redimensionner(params.carte, taille.largeur, taille.hauteur))] : [];
   const reponse = await editer(params.consigne, await encoderPng(envoi), {
     taille: `${taille.largeur}x${taille.hauteur}`,
-    references: params.references,
+    references: [...carteEnvoi, ...(params.references ?? [])],
   });
   const image = await redimensionner(await decoder(reponse.buffer), photo.largeur, photo.hauteur);
   return { image, masque: null, usage: reponse.usage, taille };
+}
+
+/**
+ * Passes par matériau : après le rendu principal, chaque matériau est repris dans une
+ * édition masquée limitée à sa zone de la carte (élargie de 2 px, fondu de 3 px). Hors
+ * de cette zone, l'image est inchangée au pixel près.
+ */
+export async function passesParMateriau(params: {
+  image: ImageRGBA;
+  carte: ImageRGBA;
+  materiaux: { nom: string; description: string; rgb: [number, number, number] }[];
+  consigne: (m: { nom: string; description: string }) => string;
+  editer: Editeur;
+  references?: Buffer[];
+}): Promise<{ image: ImageRGBA; usages: UsageModele[] }> {
+  let image = params.image;
+  const carte = await redimensionner(params.carte, image.largeur, image.hauteur);
+  const usages: UsageModele[] = [];
+  for (const m of params.materiaux) {
+    const masque = masqueFinal(masqueCouleur(carte, m.rgb), 2, 3);
+    const boite = boiteEnglobante(masque);
+    if (!boite) continue;
+    const rect = recadrageAutour(boite, image.largeur, image.hauteur);
+    const taille = tailleModele(rect.largeur, rect.hauteur);
+    const envoi = await redimensionner(extraireRect(image, rect), taille.largeur, taille.hauteur);
+    const masqueEnvoi = await redimensionnerMasque(extraireRectMasque(masque, rect), taille.largeur, taille.hauteur);
+    const reponse = await params.editer(params.consigne(m), await encoderPng(envoi), {
+      masquePng: await encoderPng(masquePourApi(masqueEnvoi)),
+      taille: `${taille.largeur}x${taille.hauteur}`,
+      references: params.references,
+    });
+    usages.push(reponse.usage);
+    const resultat = await redimensionner(await decoder(reponse.buffer), rect.largeur, rect.hauteur);
+    image = recoller(image, resultat, rect, masque);
+  }
+  return { image, usages };
 }

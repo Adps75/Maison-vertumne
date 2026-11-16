@@ -34,6 +34,8 @@ export const schemaGeneration = z.object({
   consignesSup: z.string().max(500).default(""),
   materiaux: z.array(schemaMateriauDecrit).max(40).default([]),
   plantesPrincipales: z.array(z.string().min(1).max(80)).max(5).default([]),
+  /** Une passe masquée par matériau après le rendu principal (option, coût en plus). */
+  passesMateriaux: z.boolean().default(false),
 });
 export type DemandeGeneration = z.infer<typeof schemaGeneration>;
 
@@ -70,6 +72,8 @@ export function cheminsRendu(projetId: string, renduId: string) {
     masqueScene: `${base}/masque-scene.png`,
     image: `${base}/image.png`,
     masque: `${base}/masque.png`,
+    /** Carte des matériaux : envoyée au modèle, conservée avec le rendu (trace). */
+    carte: `${base}/carte.png`,
   };
 }
 
@@ -86,6 +90,8 @@ export interface LigneRendu {
   references_utilisees?: { id: string; path: string }[];
   consignes_sup?: string | null;
   annotations?: boolean;
+  carte_path?: string | null;
+  passes_materiaux?: number;
 }
 
 /** Vérifie que le point de vue appartient au projet ; renvoie sa photo. */
@@ -100,7 +106,7 @@ export async function chargerPointDeVue(supabase: SupabaseClient, projetId: stri
 }
 
 /** Supprime les fichiers de stockage de rendus. */
-export async function supprimerFichiersRendus(supabase: SupabaseClient, rendus: Pick<LigneRendu, "image_path" | "masque_path">[]) {
-  const chemins = rendus.flatMap((r) => [r.image_path, r.masque_path].filter((p): p is string => !!p));
+export async function supprimerFichiersRendus(supabase: SupabaseClient, rendus: Pick<LigneRendu, "image_path" | "masque_path" | "carte_path">[]) {
+  const chemins = rendus.flatMap((r) => [r.image_path, r.masque_path, r.carte_path].filter((p): p is string => !!p));
   if (chemins.length > 0) await supabase.storage.from(BUCKET).remove(chemins);
 }

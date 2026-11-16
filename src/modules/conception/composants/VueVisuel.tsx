@@ -58,6 +58,7 @@ export function VueVisuel({
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const captureRef = useRef<CaptureurRendu | null>(null);
   const [renduOuvert, setRenduOuvert] = useState(false);
+  const [materiauxVisibles, setMateriauxVisibles] = useState(true);
 
   // Interaction végétaux 3D
   const {
@@ -172,6 +173,17 @@ export function VueVisuel({
             Composer avec l&apos;IA
           </button>
         )}
+        {(donnees.materiaux3D.surfaces.length > 0 || donnees.materiaux3D.lineaires.length > 0) && (
+          <button
+            onClick={() => setMateriauxVisibles((v) => !v)}
+            aria-pressed={materiauxVisibles}
+            title="Matériaux du projet dessinés sur la vue (toujours envoyés au rendu IA)"
+            className={`px-3 py-1 rounded text-[0.75rem] ${materiauxVisibles ? "bg-ink text-paper" : "bg-paper text-ink border border-hair-light hover:bg-paper-2"}`}
+            data-testid="btn-materiaux-visuel"
+          >
+            Matériaux
+          </button>
+        )}
         <button
           onClick={() => setRenduOuvert((v) => !v)}
           aria-pressed={renduOuvert}
@@ -255,6 +267,7 @@ export function VueVisuel({
                 dragPositionRef={dragPositionRef}
                 dragElementIdRef={dragElementIdRef}
                 captureRef={captureRef}
+                materiauxVisibles={materiauxVisibles}
               />
               </div>
               {/* Traits de construction : scène superposée, transparente aux clics, hors export */}

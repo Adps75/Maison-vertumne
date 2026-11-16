@@ -100,7 +100,9 @@ export type NomOutil =
   | "zone_rectangle"
   | "zone_polygone"
   | "point_cote"
-  | "ref";
+  | "ref"
+  | "decouper"
+  | "bordure";
 
 // ===================== Accrochage =====================
 
@@ -177,7 +179,7 @@ export function elementSelectionnableAEtape(type: TypeElement, etape: NumeroEtap
 const OUTILS_PAR_ETAPE: Record<NumeroEtape, Set<NomOutil>> = {
   1: new Set(["selection", "mesurer"]),
   2: new Set(["selection", "mesurer", "zone_rectangle", "zone_polygone"]),
-  3: new Set(["selection", "polyligne", "polygone", "rectangle", "cercle", "arc", "cote", "texte", "deplacer", "copier", "rotation", "miroir", "mesurer", "point_cote", "ref"]),
+  3: new Set(["selection", "polyligne", "polygone", "rectangle", "cercle", "arc", "cote", "texte", "deplacer", "copier", "rotation", "miroir", "mesurer", "point_cote", "ref", "decouper", "bordure"]),
   4: new Set(["selection", "planter", "deplacer", "copier", "rotation", "miroir", "mesurer"]),
   5: new Set(["selection", "mesurer"]),
   6: new Set(["selection", "mesurer"]),

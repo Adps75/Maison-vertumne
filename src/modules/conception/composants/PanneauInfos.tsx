@@ -10,7 +10,8 @@ import {
   cercleVersPolygone,
 } from "../geo/plan";
 import { FORMES_EXISTANT, LIBELLES_FORMES_EXISTANT, type FormeExistant } from "../composition/schemas";
-import { cotesExclus, materiauCompatible, materiauDe, quantiteElement, type Materiau } from "../materiaux/materiaux";
+import { materiauCompatible, materiauDe, quantiteElement, type Materiau } from "../materiaux/materiaux";
+import { contourBordable, estBordure } from "../materiaux/bordures";
 
 interface Props {
   selection: Element[];
@@ -112,8 +113,7 @@ export function PanneauInfos({ selection, onModifier, materiaux = [] }: Props) {
             const compatibles = materiaux.filter((m) => materiauCompatible(el, m));
             if (compatibles.length === 0) return null;
             const m = materiauDe(el, new Map(materiaux.map((x) => [x.id, x])));
-            const surContour = m?.type === "lineaire" && el.geometrie.type !== "polyligne";
-            const exclus = cotesExclus(el).length;
+            const bordure = estBordure(el);
             return (
               <div className="pt-1 mt-1 border-t border-hair-light space-y-1" data-testid="proprietes-materiau">
                 <div className="flex justify-between items-center gap-2">
@@ -139,10 +139,13 @@ export function PanneauInfos({ selection, onModifier, materiaux = [] }: Props) {
                     </dd>
                   </div>
                 )}
-                {surContour && el.geometrie.type !== "cercle" && (
-                  <p className="text-[0.7rem] text-stone" data-testid="aide-cotes">
-                    Cliquez un côté du contour sur le plan pour l&apos;exclure ou le réinclure
-                    {exclus > 0 ? ` (${exclus} exclu${exclus > 1 ? "s" : ""}, en pointillés)` : ""}.
+                {bordure ? (
+                  <p className="text-[0.7rem] text-stone" data-testid="info-bordure">
+                    Bordure liée à une surface : elle suit son contour.
+                  </p>
+                ) : contourBordable(el) && (
+                  <p className="text-[0.7rem] text-stone" data-testid="aide-bordure">
+                    Bordure (volige, pierre…) : commande BOR, puis cliquez les côtés.
                   </p>
                 )}
               </div>
