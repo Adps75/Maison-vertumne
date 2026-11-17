@@ -31,13 +31,16 @@ async function creerProjet(page: Page) {
   return page.url().match(/\/conception\/([a-f0-9-]+)/)?.[1] ?? null;
 }
 
-test.describe("Sauvegarde juste après la création du projet", () => {
+let projetCree: string | null = null;
+
+test.describe.serial("Sauvegarde juste après la création du projet", () => {
   test.setTimeout(180_000);
   test.skip(() => !process.env.E2E_EMAIL?.trim(), "E2E_EMAIL non défini");
 
   test("le relief enregistré en arrière-plan ne bloque pas la sauvegarde des éléments", async ({ page }) => {
     const projetId = await creerProjet(page);
     expect(projetId).toBeTruthy();
+    projetCree = projetId;
 
     // Sans recharger la page : attendre que le relief soit enregistré en arrière-plan
     // (c'est ce qui modifiait la ligne du projet et provoquait le faux conflit)
@@ -65,5 +68,37 @@ test.describe("Sauvegarde juste après la création du projet", () => {
     await expect(statut).toHaveAttribute("data-statut", "sauvegarde", { timeout: 15_000 });
     const elements = await (await page.request.get(`/api/conception/projets/${projetId}/elements`)).json();
     expect((elements.elements ?? []).length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("modification suivie d'un rechargement immédiat (moins de 2 s) : conservée", async ({ page }) => {
+    test.skip(!projetCree, "Projet de test non créé");
+    // Avertissement du navigateur (modifications non enregistrées) : on quitte quand même
+    page.on("dialog", (d) => void d.accept());
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/conception/${projetCree}`);
+    await page.waitForFunction(() => !!(window as unknown as Record<string, unknown>).__editeurTest, null, { timeout: 30_000 });
+    await page.waitForTimeout(1500);
+    const avant = (await (await page.request.get(`/api/conception/projets/${projetCree}/elements`)).json()).elements.length;
+
+    // Tracer un rectangle puis recharger aussitôt, sans attendre l'enregistrement différé
+    await page.locator("[data-testid='etape-3']").click();
+    const canvas = (await page.locator("canvas").first().boundingBox())!;
+    const cx = canvas.x + canvas.width / 2 + 120, cy = canvas.y + canvas.height / 2 + 80;
+    await page.keyboard.type("REC");
+    await page.keyboard.press("Space");
+    await page.mouse.click(cx - 30, cy - 20);
+    await page.mouse.click(cx + 30, cy + 20);
+    await expect(page.locator("[data-testid='statut-sauvegarde']")).toHaveAttribute("data-statut", "non_sauvegarde");
+    const t0 = Date.now();
+    await page.reload();
+    expect(Date.now() - t0).toBeLessThan(15_000);
+
+    // Le rectangle est en base et réapparaît sur le plan
+    await expect.poll(async () => (await (await page.request.get(`/api/conception/projets/${projetCree}/elements`)).json()).elements.length, { timeout: 10_000 })
+      .toBe(avant + 1);
+    await page.waitForFunction((n) => {
+      const t = (window as unknown as Record<string, unknown>).__editeurTest as { elements: Map<string, unknown> } | undefined;
+      return !!t && t.elements.size === n;
+    }, avant + 1, { timeout: 30_000 });
   });
 });

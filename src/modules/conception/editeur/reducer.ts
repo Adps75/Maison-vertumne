@@ -118,6 +118,17 @@ export function viderChangements() {
   changements = { upserts: [], suppressions: [] };
 }
 
+/**
+ * Retire de la file les changements déjà envoyés (les `nbUpserts` premiers upserts et
+ * `nbSuppressions` premières suppressions) : ceux arrivés pendant l'envoi sont gardés.
+ */
+export function retirerChangementsEnvoyes(nbUpserts: number, nbSuppressions: number) {
+  changements = {
+    upserts: changements.upserts.slice(nbUpserts),
+    suppressions: changements.suppressions.slice(nbSuppressions),
+  };
+}
+
 // ===================== Reducer =====================
 
 export function reducer(etat: EtatEditeur, action: Action): EtatEditeur {

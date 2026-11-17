@@ -13,6 +13,9 @@ interface Plante {
   largeur_adulte_m: number | null;
   face_url: string | null;
   dessus_url: string | null;
+  /** Présence des images (chemin enregistré et fichier présent), indépendante des URL signées. */
+  image_face_ok?: boolean;
+  image_dessus_ok?: boolean;
   statut: string;
   est_reference: boolean;
   cout_generation_total: number;
@@ -244,9 +247,9 @@ export function BibliothequeClient() {
                 {/* Images face + dessus côte à côte */}
                 <div className="flex h-[200px]" style={{ background: DAMIER }}>
                   <div className="flex-1 flex items-center justify-center p-2">
-                    {p.face_url ? (
+                    {(p.image_face_ok ?? !!p.face_url) ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.face_url} alt="Face" className="max-h-full max-w-full object-contain" />
+                      <img src={p.face_url ?? `/api/conception/plantes/${p.id}/image/face`} alt="Face" className="max-h-full max-w-full object-contain" />
                     ) : generation === p.id ? (
                       <span className="text-stone text-[0.75rem]">⏳ Génération…</span>
                     ) : (
@@ -256,9 +259,9 @@ export function BibliothequeClient() {
                   </div>
                   <div className="w-px bg-hair-light" />
                   <div className="flex-1 flex items-center justify-center p-2">
-                    {p.dessus_url ? (
+                    {(p.image_dessus_ok ?? !!p.dessus_url) ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={p.dessus_url} alt="Dessus" className="max-h-full max-w-full object-contain" />
+                      <img src={p.dessus_url ?? `/api/conception/plantes/${p.id}/image/dessus`} alt="Dessus" className="max-h-full max-w-full object-contain" />
                     ) : generation === p.id ? (
                       <span className="text-stone text-[0.75rem]">⏳ Génération…</span>
                     ) : (
@@ -323,15 +326,15 @@ export function BibliothequeClient() {
             </div>
             <div className="flex gap-4 h-[300px]" style={{ background: DAMIER }}>
               <div className="flex-1 flex items-center justify-center p-4">
-                {ficheOuverte.face_url ? (
+                {(ficheOuverte.image_face_ok ?? !!ficheOuverte.face_url) ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={ficheOuverte.face_url} alt="Vue de face" className="max-h-full max-w-full object-contain" />
+                  <img src={ficheOuverte.face_url ?? `/api/conception/plantes/${ficheOuverte.id}/image/face`} alt="Vue de face" className="max-h-full max-w-full object-contain" />
                 ) : <span className="text-stone">Vue de face absente</span>}
               </div>
               <div className="flex-1 flex items-center justify-center p-4">
-                {ficheOuverte.dessus_url ? (
+                {(ficheOuverte.image_dessus_ok ?? !!ficheOuverte.dessus_url) ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={ficheOuverte.dessus_url} alt="Vue de dessus" className="max-h-full max-w-full object-contain" />
+                  <img src={ficheOuverte.dessus_url ?? `/api/conception/plantes/${ficheOuverte.id}/image/dessus`} alt="Vue de dessus" className="max-h-full max-w-full object-contain" />
                 ) : <span className="text-stone">Vue de dessus absente</span>}
               </div>
             </div>

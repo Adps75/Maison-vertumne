@@ -40,6 +40,9 @@ interface PlanteBiblio extends PlanteComposee {
   statut: string;
   face_url: string | null;
   dessus_url: string | null;
+  /** Présence des images (chemin enregistré et fichier présent), indépendante des URL signées. */
+  image_face_ok?: boolean;
+  image_dessus_ok?: boolean;
 }
 
 type EtatAjout = "attente" | "creation" | "images" | "prete" | "erreur";
@@ -83,6 +86,10 @@ const LIBELLES_NATURES: Record<NatureExistant, string> = {
   bordure: "Bordure", dallage: "Dallage", mobilier: "Mobilier", autre: "Autre",
 };
 const LIBELLES_CONFIANCE = { faible: "confiance faible", moyenne: "confiance moyenne", elevee: "confiance élevée" } as const;
+
+/** Présence des images d'une plante (repli sur l'URL pour une réponse ancienne). */
+const imageFace = (p: { image_face_ok?: boolean; face_url: string | null }) => p.image_face_ok ?? !!p.face_url;
+const imageDessus = (p: { image_dessus_ok?: boolean; dessus_url: string | null }) => p.image_dessus_ok ?? !!p.dessus_url;
 
 const champBase = "border border-hair-light rounded px-2 py-1.5 bg-paper text-ink text-[0.8rem]";
 const champ = `w-full ${champBase}`;
@@ -325,7 +332,8 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
   };
 
   const ajoutsEnAttente = ajouts.filter((a) => a.actif && a.etat !== "prete").length;
-  const sansImages = idsFinaux.filter((id) => { const p = parId.get(id); return !p || !p.face_url || !p.dessus_url; });
+  // « n'a pas d'image » seulement si le chemin est vide ou le fichier absent du stockage
+  const sansImages = idsFinaux.filter((id) => { const p = parId.get(id); return !p || !imageFace(p) || !imageDessus(p); });
   const peutComposer = idsFinaux.length > 0 && ajoutsEnAttente === 0 && sansImages.length === 0;
 
   // ─── Composition : intention puis placement (par le parent) ──────────
@@ -578,9 +586,11 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
                   const p = parId.get(r.id);
                   return (
                     <li key={`${r.id}-${i}`} className={`flex gap-3 rounded border border-hair-light p-2 ${r.actif ? "" : "opacity-50"}`} data-testid="palette-retenue">
-                      {p?.face_url
+                      {p && imageFace(p)
                         // eslint-disable-next-line @next/next/no-img-element
-                        ? <img src={`/api/conception/plantes/${p.id}/image/face?v=${encodeURIComponent(p.updated_at ?? "")}`} alt="" className="w-12 h-12 object-contain shrink-0" />
+                        ? <img src={`/api/conception/plantes/${p.id}/image/face?v=${encodeURIComponent(p.updated_at ?? "")}`} alt="" className="w-12 h-12 object-contain shrink-0 bg-paper-2"
+                          // Vignette indisponible : emplacement neutre, la plante reste utilisable
+                          onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
                         : <div className="w-12 h-12 bg-paper-2 shrink-0" />}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium truncate">{p?.nom_commun ?? r.id}</p>
@@ -594,7 +604,7 @@ export function AssistantComposition({ projetId, contours, contourParDefaut, cal
                             onChange={(e) => { const v = e.target.value; if (v) setRetenues((l) => l.map((x, j) => (j === i ? { ...x, id: v, raison: "Remplacement choisi par le paysagiste", actif: true } : x))); }}
                             aria-label="Remplacer par">
                             <option value="">Remplacer par…</option>
-                            {bibliotheque.filter((b) => b.face_url).map((b) => <option key={b.id} value={b.id}>{b.nom_commun} ({b.nom_latin})</option>)}
+                            {bibliotheque.filter((b) => imageFace(b)).map((b) => <option key={b.id} value={b.id}>{b.nom_commun} ({b.nom_latin})</option>)}
                           </select>
                         </div>
                       </div>

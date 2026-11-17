@@ -29,6 +29,8 @@ import { COMMANDES, parseSaisie } from "@/modules/conception/editeur/commandes";
 import { dist as distPlan } from "@/modules/conception/geo/plan";
 import {
   planifierSauvegarde,
+  envoyerImmediatement,
+  aDesModificationsNonEnregistrees,
   setUpdatedAt,
   type StatutSauvegarde,
 } from "@/modules/conception/editeur/sauvegarde";
@@ -379,6 +381,29 @@ export function PageProjetClient() {
       planifierSauvegarde(id, setSauvegarde);
     }
   }, [etat.elements, id]);
+
+  // Rien ne se perd en quittant : envoi immédiat à la fermeture ou au masquage de l'onglet,
+  // et quand on quitte le projet dans l'application (démontage) ; avertissement du
+  // navigateur s'il reste des modifications non enregistrées.
+  useEffect(() => {
+    const surMasquage = () => { if (document.visibilityState === "hidden") void envoyerImmediatement(true); };
+    const surPagehide = () => { void envoyerImmediatement(true); };
+    const avantQuitter = (e: BeforeUnloadEvent) => {
+      if (!aDesModificationsNonEnregistrees()) return;
+      void envoyerImmediatement(true);
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    document.addEventListener("visibilitychange", surMasquage);
+    window.addEventListener("pagehide", surPagehide);
+    window.addEventListener("beforeunload", avantQuitter);
+    return () => {
+      document.removeEventListener("visibilitychange", surMasquage);
+      window.removeEventListener("pagehide", surPagehide);
+      window.removeEventListener("beforeunload", avantQuitter);
+      void envoyerImmediatement(true);
+    };
+  }, []);
 
   // Extraire les points de la parcelle pour l'accrochage
   const parcellePoints: Pt[] = [];

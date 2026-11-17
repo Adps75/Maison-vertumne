@@ -23,9 +23,9 @@ async function creerProjet(page: import("@playwright/test").Page) {
   await page.locator('input[placeholder="Optionnel"]').fill("E2E-drag-real-" + Date.now());
   const adresse = page.locator('input[placeholder*="rue"]');
   await adresse.fill("12 avenue Jean Moulin, Le Plessis-Robinson");
-  await page.waitForTimeout(1500);
+  // Géocodage data.geopf.fr : réponse parfois en 7 s ou plus
   const sug = page.locator("li").first();
-  if (!(await sug.isVisible({ timeout: 3000 }).catch(() => false))) return null;
+  if (!(await sug.waitFor({ state: "visible", timeout: 15000 }).then(() => true).catch(() => false))) return null;
   await sug.click();
   await page.waitForTimeout(500);
   await page.click("text=Créer");
@@ -170,6 +170,8 @@ test.describe.serial("Glisser-déposer réaliste", () => {
       expect(ptsAfter[i][0] - ptsBefore[i][0]).toBeCloseTo(dx, 1);
       expect(ptsAfter[i][1] - ptsBefore[i][1]).toBeCloseTo(dy, 1);
     }
+    // Le test suivant repart de ce rectangle : attendre qu'il soit enregistré
+    await expect(page.locator("[data-testid='statut-sauvegarde']")).toHaveAttribute("data-statut", "sauvegarde", { timeout: 15_000 });
   });
 
   test("Alt + glisser = copie, original inchangé", async ({ page }) => {
@@ -188,12 +190,20 @@ test.describe.serial("Glisser-déposer réaliste", () => {
     const countBefore = idsBefore.length;
     expect(countBefore).toBeGreaterThanOrEqual(1);
 
+    // Viser le rectangle là où il est réellement (le test précédent l'a déplacé et enregistré)
+    const rect = elsBefore[idsBefore[0]] as { geometrie: { points: number[][] } };
+    const pts = rect.geometrie.points;
+    const centre = await page.evaluate(([x, y]) =>
+      (window as unknown as Record<string, { versEcran: (x: number, y: number) => [number, number] | null }>).__canevasTest.versEcran(x, y),
+    [(pts[0][0] + pts[2][0]) / 2, (pts[0][1] + pts[2][1]) / 2] as [number, number]);
+    const [rx, ry] = centre ?? [cx, cy];
+
     // Sélectionner l'élément
-    await page.mouse.click(cx, cy);
+    await page.mouse.click(rx, ry);
     await page.waitForTimeout(300);
 
     // Alt + glisser
-    await dragRealiste(page, cx, cy, cx + 80, cy + 20, { alt: true });
+    await dragRealiste(page, rx, ry, rx + 80, ry + 20, { alt: true });
 
     // Vérifier qu'un élément a été ajouté
     const elsAfter = await getElements(page);

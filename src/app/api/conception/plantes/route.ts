@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exigerAdmin, ErreurNonAutorise } from "@/lib/auth/admin";
+import { imageSignee } from "@/modules/conception/serveur/urls-signees";
 
 interface LignePlante {
   image_face_path: string | null;
@@ -37,20 +38,12 @@ export async function GET(request: NextRequest) {
     }
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-    // Signed URLs pour les images
+    // URL signées des images (nouvel essai en cas d'échec) ; la présence d'une image se juge
+    // d'après son chemin et le stockage, jamais d'après la réussite de la signature
     const plantes = await Promise.all(
       ((data ?? []) as unknown as LignePlante[]).map(async (p) => {
-        let faceUrl = null;
-        let dessusUrl = null;
-        if (p.image_face_path) {
-          const { data: d } = await supabase.storage.from("conception").createSignedUrl(p.image_face_path, 3600);
-          faceUrl = d?.signedUrl ?? null;
-        }
-        if (p.image_dessus_path) {
-          const { data: d } = await supabase.storage.from("conception").createSignedUrl(p.image_dessus_path, 3600);
-          dessusUrl = d?.signedUrl ?? null;
-        }
-        return { ...p, face_url: faceUrl, dessus_url: dessusUrl };
+        const [face, dessus] = await Promise.all([imageSignee(supabase, p.image_face_path), imageSignee(supabase, p.image_dessus_path)]);
+        return { ...p, face_url: face.url, dessus_url: dessus.url, image_face_ok: face.presente, image_dessus_ok: dessus.presente };
       }),
     );
 
