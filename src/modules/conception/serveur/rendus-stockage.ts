@@ -36,7 +36,19 @@ export const schemaGeneration = z.object({
   plantesPrincipales: z.array(z.string().min(1).max(80)).max(5).default([]),
   /** Une passe masquée par matériau après le rendu principal (option, coût en plus). */
   passesMateriaux: z.boolean().default(false),
+  /** Styles dessinés : régénérer la base stylisée au lieu de la réutiliser. */
+  refaireBase: z.boolean().default(false),
 });
+
+/** Chemin de stockage d'une base stylisée. */
+export function cheminBase(projetId: string, baseId: string) {
+  return `projets/${projetId}/bases/${baseId}.png`;
+}
+
+/** Clé des références de style : identifiants triés (l'ordre de dépôt n'importe pas). */
+export function cleReferences(refs: { id: string }[]): string {
+  return refs.map((r) => r.id).sort().join(",");
+}
 export type DemandeGeneration = z.infer<typeof schemaGeneration>;
 
 /** Chemin de stockage d'une image de référence de style. */
@@ -72,8 +84,10 @@ export function cheminsRendu(projetId: string, renduId: string) {
     masqueScene: `${base}/masque-scene.png`,
     image: `${base}/image.png`,
     masque: `${base}/masque.png`,
-    /** Carte des matériaux : envoyée au modèle, conservée avec le rendu (trace). */
+    /** Carte des matériaux : sert aux masques par matériau, conservée avec le rendu. */
     carte: `${base}/carte.png`,
+    /** Emprise de l'existant (volumes et disques au sol) : exclue des masques. */
+    existant: `${base}/existant.png`,
   };
 }
 
@@ -92,6 +106,7 @@ export interface LigneRendu {
   annotations?: boolean;
   carte_path?: string | null;
   passes_materiaux?: number;
+  base_id?: string | null;
 }
 
 /** Vérifie que le point de vue appartient au projet ; renvoie sa photo. */

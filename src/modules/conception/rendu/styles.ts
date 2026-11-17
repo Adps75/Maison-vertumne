@@ -98,26 +98,43 @@ export function consigneStyle(style: StyleProjet, nbReferences: number): string 
   return `${CONSIGNES_STYLES[style]}${refs}`;
 }
 
-/** Entrée de la légende de la carte des matériaux. */
-export interface LegendeCarte {
-  nom: string;
-  /** Nom de la couleur sur la carte (« rouge », « vert »…). */
-  couleur: string;
-  description: string;
+/** Base stylisée : la photo seule redessinée, sans rien ajouter (le projet viendra ensuite). */
+export function consigneBase(style: Exclude<StyleProjet, "realiste">, nbReferences: number): string {
+  return `${consigneStyle(style, nbReferences)}\n\nDraw ONLY what is in the photograph: do not add, remove or change any element — no new plants, no planting bed, no mulch, no edging, no text.`;
 }
 
-const COULEURS_EN: Record<string, string> = {
-  rouge: "red", vert: "green", bleu: "blue", jaune: "yellow", magenta: "magenta", cyan: "cyan", orange: "orange", violet: "purple",
+const STYLES_EN: Record<Exclude<StyleProjet, "realiste">, string> = {
+  croquis: "a landscape architect's sketch: fine ink linework, light transparent watercolour washes, desaturated colours, white paper in reserve",
+  aquarelle: "a landscape architect's illustration: loose watercolour washes with fine ink linework on warm off-white paper",
+  feutres: "a competition-style marker rendering: bold saturated marker colours, strong dark outlines",
 };
 
-/** Consigne de la carte des matériaux (deuxième image envoyée, juste après la scène). */
-export function consigneCarte(legende: LegendeCarte[], style: StyleProjet): string {
-  return [
-    "The SECOND image is a MATERIAL MAP with exactly the same framing as the scene: each flat colour marks the exact area of one project material.",
-    "Respect this map exactly: each material only inside its coloured zone, covering it entirely and never going beyond its edges; black areas of the map must not receive any of these materials (keep what is there).",
-    style === "realiste" ? "The materials are already drawn at their place in the scene: make them look real (texture, lighting, shadows, contact with the ground) without moving their edges." : "The materials are already drawn at their place in the scene: render them in the requested style without moving their edges.",
-    `Legend (descriptions in French):\n${legende.map((l) => `- ${COULEURS_EN[l.couleur] ?? l.couleur} = ${l.nom} : ${l.description}`).join("\n")}`,
-  ].join(" ");
+/**
+ * Édition masquée sur la base stylisée : le projet (plantes, matériaux, bordures) a été
+ * superposé dans la zone transparente ; le modèle le redessine dans le style de l'image,
+ * sans rien déplacer. Hors de cette zone, l'image est recollée telle quelle.
+ */
+export function consigneEditionBase(o: Omit<OptionsConsigne, "style"> & { style: Exclude<StyleProjet, "realiste"> }): string {
+  const n = o.nbReferences;
+  const parties = [[
+    `The first image is a drawing in a precise style (${STYLES_EN[o.style]}).`,
+    "New project elements (plants, ground materials such as mulch or lawn, edging) have been pasted into it as 3D renderings inside the transparent (masked) area.",
+    "Edit ONLY the transparent area: redraw these elements in exactly the same drawing style as the surrounding image (same linework, colours, paper and technique),",
+    "keeping each plant, each material and each edging exactly at its place, with its size, shape and colour. Blend the edges of the area seamlessly into the surrounding drawing.",
+    "Do not add, remove or move anything.",
+    n > 0 ? `The LAST ${n === 1 ? "image is a STYLE REFERENCE" : `${n} images are STYLE REFERENCES`} ONLY: do NOT copy their content.` : "",
+  ].filter(Boolean).join(" ")];
+  if (o.materiaux.length > 0) {
+    parties.push(`Materials shown in the area (descriptions in French):\n${[...new Map(o.materiaux.map((m) => [m.nom, m])).values()].map((m) => `- ${m.nom} : ${m.description}`).join("\n")}`);
+  }
+  if (o.annotations && o.style === "croquis" && o.plantesPrincipales.length > 0) {
+    parties.push(`Add handwritten labels in French, with thin hand-drawn arrows pointing to the corresponding plants: ${o.plantesPrincipales.map((p) => `« ${p} »`).join(", ")}. Write only these names, spelled exactly as given.`);
+  } else {
+    parties.push("Do not add any text, label or lettering.");
+  }
+  const sup = o.consignesSup.trim();
+  if (sup) parties.push(`Additional instructions from the landscape architect (ambience, season, light; they never change the design, the plants or their positions): « ${sup} »`);
+  return parties.join("\n\n");
 }
 
 /** Consigne d'une passe limitée à la zone d'un matériau (masque). */
@@ -137,10 +154,8 @@ export interface OptionsConsigne {
   annotations: boolean;
   /** Plantes principales visibles dans la vue (pour les annotations). */
   plantesPrincipales: string[];
-  /** Matériaux du projet visibles dans la vue (texte, si aucune carte). */
+  /** Matériaux du projet visibles dans la vue (nom et description, jamais de position). */
   materiaux: MateriauDecrit[];
-  /** Légende de la carte des matériaux envoyée en deuxième image (vide : pas de carte). */
-  carte?: LegendeCarte[];
   /** Consignes supplémentaires du paysagiste (ambiance, saison, lumière). */
   consignesSup: string;
 }
@@ -155,9 +170,7 @@ function ligneMateriau(m: MateriauDecrit): string {
 /** Consigne complète d'un rendu : style, matériaux, annotations, consignes supplémentaires. */
 export function consigneRendu(o: OptionsConsigne): string {
   const parties = [consigneStyle(o.style, o.nbReferences)];
-  if (o.carte && o.carte.length > 0) {
-    parties.push(consigneCarte(o.carte, o.style));
-  } else if (o.materiaux.length > 0) {
+  if (o.materiaux.length > 0) {
     parties.push(o.style === "realiste"
       ? `Inside the transparent area, also render these project materials, exactly where they are in the image (descriptions in French):\n${o.materiaux.map(ligneMateriau).join("\n")}`
       : `The project also includes these materials, to be drawn clearly where they are in the image (descriptions in French):\n${o.materiaux.map(ligneMateriau).join("\n")}`);

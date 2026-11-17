@@ -3,7 +3,7 @@ import type { Element } from "../../types";
 import type { Pt } from "../../geo/plan";
 import {
   quantitesMateriaux, quantiteElement, contoursMasqueMateriaux,
-  materiauCompatible, positionRelative, decrireMateriaux, coteProche, cotesApresSuppressionSommet,
+  materiauCompatible, positionRelative, decrireMateriaux, coteProche, cotesApresSuppressionSommet, massifsSansSol,
   type Materiau, type ProjeterVue,
 } from "../materiaux";
 import { pointDansPolygone } from "../../geo/plan";
@@ -117,5 +117,24 @@ describe("position par rapport au massif, vue depuis la caméra", () => {
       el({ type: "polygone", points: rect(0, -9, 5, 4) }, { materiau_id: "gazon" }),
     ], MATERIAUX, [10, 10], p2);
     expect(d).toEqual([{ nom: "Gazon (rénovation)", description: "desc gazon", quantite: 20, unite: "m2", position: "à gauche du massif, devant le massif, au premier plan" }]);
+  });
+});
+
+describe("massifs sans matériau de sol (avertissement avant le rendu)", () => {
+  const plante = (x: number, y: number, statut: Element["statut"] = "nouveau"): Element => ({
+    id: `p${x}-${y}`, type: "vegetal", geometrie: { type: "point", position: [x, y] }, calque: "vegetal", statut, hauteur: 1, proprietes: {}, ordre: 0,
+  });
+  it("surface avec des plantes et sans paillage : signalée ; avec un paillage : non", () => {
+    const sans = el({ type: "polygone", points: rect(0, 0, 4, 4) });
+    const avec = el({ type: "polygone", points: rect(10, 0, 4, 4) }, { materiau_id: "ecorce" });
+    const vide = el({ type: "polygone", points: rect(20, 0, 4, 4) });
+    const r = massifsSansSol([sans, avec, vide, plante(2, 2), plante(12, 2), plante(22, 2, "existant")], MATERIAUX);
+    expect(r.surfaces.map((s) => s.id)).toEqual([sans.id]);
+    expect(r.zoneSeule).toBe(false);
+  });
+  it("zone active : des plantes hors de toute surface tracée", () => {
+    const zone: Pt[] = rect(0, 0, 10, 10);
+    expect(massifsSansSol([plante(5, 5)], MATERIAUX, zone)).toEqual({ surfaces: [], zoneSeule: true });
+    expect(massifsSansSol([plante(5, 5), el({ type: "polygone", points: rect(4, 4, 2, 2) }, { materiau_id: "ecorce" })], MATERIAUX, zone).zoneSeule).toBe(false);
   });
 });

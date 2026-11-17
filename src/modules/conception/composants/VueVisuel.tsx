@@ -218,7 +218,13 @@ export function VueVisuel({
       <div className="flex-1 flex min-h-0 relative">
         {renduOuvert && (
           <PanneauRenduIA pdv={pdv} captureRef={captureRef} donnees={donnees} elements={elements} materiaux={materiaux} altitudeEn={altitudeEn}
-            style={styleRendu} annotations={annotationsRendu} onChangerStyle={onChangerStyleRendu} onFermer={() => setRenduOuvert(false)} />
+            style={styleRendu} annotations={annotationsRendu} onChangerStyle={onChangerStyleRendu} onFermer={() => setRenduOuvert(false)}
+            onPoserMateriau={(ids, materiauId) => {
+              // Raccourci de l'avertissement : une action annulable
+              const modifies = ids.map((id) => elements.get(id)).filter((e): e is Element => !!e)
+                .map((e) => ({ ...e, proprietes: { ...e.proprietes, materiau_id: materiauId } }));
+              if (modifies.length > 0) dispatch({ type: "MODIFIER_ELEMENTS", elements: modifies });
+            }} />
         )}
         {/* Photo + scène superposée */}
         <div ref={parentRef} className="flex-1 relative bg-black overflow-hidden">

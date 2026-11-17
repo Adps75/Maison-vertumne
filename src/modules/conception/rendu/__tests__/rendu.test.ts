@@ -9,7 +9,8 @@ import { tailleModele, recadrageAutour, PIXELS_MIN_MODELE, COTE_MAX_MODELE } fro
 import { recoller } from "../recollage";
 import { filtreDessin } from "../filtre-dessin";
 import { estimerCoutEdition } from "../cout";
-import { rendreRealiste, rendreDessinIA, rendreDessinFiltre, passesParMateriau, decoder, encoderPng, type Editeur } from "../pipeline";
+import { rendreRealiste, rendreDessinIA, rendreDessinFiltre, passesParMateriau, genererBase, rendreSurBase, decoder, encoderPng, type Editeur } from "../pipeline";
+import { masqueDessine } from "../masque";
 import { consigneStyle } from "../styles";
 
 // ─── Scène synthétique ────────────────────────────────────────────────
@@ -338,6 +339,51 @@ describe("chaîne de rendu avec fournisseur simulé", () => {
     expect(px(r.image, 5, 5)).toEqual(px(image, 5, 5)); // hors zone : identique
     expect(px(r.image, 25, 30)).toEqual(px(image, 25, 30)); // 5 px hors du bord : identique
     expect(px(r.image, 60, 30)).not.toEqual(px(image, 60, 30)); // dans la zone : modifié
+  });
+
+  it("base stylisée : photo seule envoyée sans masque ni couche, à la taille de la photo", async () => {
+    const editer = fournisseurSimule();
+    const r = await genererBase({ photo: photo(), editer, consigne: "BASE" });
+    expect(editer).toHaveBeenCalledTimes(1);
+    expect(editer.mock.calls[0][0]).toBe("BASE");
+    expect(editer.mock.calls[0][2].masquePng).toBeUndefined();
+    expect([r.image.largeur, r.image.hauteur]).toEqual([L, H]);
+  });
+
+  it("édition sur la base : hors du masque, chaque pixel est celui de la base ; la carte n'est pas envoyée", async () => {
+    const editer = fournisseurSimule();
+    const base = photo();
+    const ref = await sharp({ create: { width: 32, height: 32, channels: 3, background: "#123456" } }).png().toBuffer();
+    const r = await rendreSurBase({ base, couche: couche(), existant: null, editer, consigne: "EDITION", references: [ref] });
+    expect(editer).toHaveBeenCalledTimes(1);
+    expect(editer.mock.calls[0][2].masquePng).toBeDefined();
+    expect(editer.mock.calls[0][2].references).toEqual([ref]); // références de style seulement
+    let hors = 0, horsDifferents = 0, dedansModifies = 0;
+    for (let i = 0; i < L * H; i++) {
+      const j = i * 4;
+      const ecart = Math.abs(r.image.donnees[j] - base.donnees[j]) + Math.abs(r.image.donnees[j + 1] - base.donnees[j + 1]) + Math.abs(r.image.donnees[j + 2] - base.donnees[j + 2]);
+      if (r.masque!.valeurs[i] === 0) { hors++; if (ecart !== 0) horsDifferents++; } else if (r.masque!.valeurs[i] === 255 && ecart > 0) dedansModifies++;
+    }
+    expect(hors).toBeGreaterThan(L * H / 2);
+    expect(horsDifferents).toBe(0);
+    expect(dedansModifies).toBeGreaterThan(100);
+  });
+
+  it("masque dessiné : projet élargi de 15 px, emprise de l'existant exclue sauf la plante devant lui", () => {
+    const c = creerImage(L, H);
+    // Plante : carré 40×40 opaque en (100..140, 100..140)
+    for (let y = 100; y < 140; y++) for (let x = 100; x < 140; x++) c.donnees[(y * L + x) * 4 + 3] = 255;
+    const existant = creerMasque(L, H);
+    // Existant (if) : de x = 130 à 200, il touche la plante et la recouvre en partie
+    for (let y = 60; y < 180; y++) for (let x = 130; x < 200; x++) existant.valeurs[y * L + x] = 255;
+    const m = masqueDessine(c, existant);
+    const v = (x: number, y: number) => m.valeurs[y * L + x];
+    expect(v(120, 120)).toBe(255); // plante
+    expect(v(135, 120)).toBe(255); // plante devant l'existant : gardée
+    expect(v(145, 120)).toBe(0); // élargissement sur l'existant : retiré
+    expect(v(170, 170)).toBe(0); // pied de l'existant : rien
+    expect(v(90, 120)).toBe(255); // élargissement de 10 px hors existant
+    expect(v(70, 120)).toBe(0); // au-delà de 15 + 8 px
   });
 
   it("encodage PNG aller-retour sans perte", async () => {

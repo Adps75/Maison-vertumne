@@ -15,7 +15,7 @@ import {
   STYLES, LIBELLES_STYLES, DESCRIPTIONS_STYLES, MAX_REFERENCES, MENTION_DESSIN_IA, estDessine, plantesPrincipales,
   type StyleHistorique, type StyleProjet,
 } from "../rendu/styles";
-import { decrireMateriaux, type Materiau, type ProjeterVue } from "../materiaux/materiaux";
+import { decrireMateriaux, massifsSansSol, type Materiau, type ProjeterVue } from "../materiaux/materiaux";
 import { dessinerMention, telechargerCanvas } from "../rendu/mention";
 
 interface Rendu {
@@ -45,6 +45,8 @@ interface Props {
   style: StyleProjet;
   annotations: boolean;
   onChangerStyle: (style: StyleProjet, annotations: boolean) => void;
+  /** Raccourci de l'avertissement : poser un matériau de sol sur des surfaces. */
+  onPoserMateriau: (ids: string[], materiauId: string) => void;
   onFermer: () => void;
 }
 
@@ -54,7 +56,7 @@ const prochaineImage = () => new Promise<void>((r) => requestAnimationFrame(() =
 const centre = (pts: Pt[]): Pt | null =>
   pts.length === 0 ? null : [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
 
-export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, altitudeEn, style, annotations, onChangerStyle, onFermer }: Props) {
+export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, altitudeEn, style, annotations, onChangerStyle, onPoserMateriau, onFermer }: Props) {
   const base = `/api/conception/projets/${pdv.projet_id}/points-de-vue/${pdv.id}/rendus`;
   const [rendus, setRendus] = useState<Rendu[]>([]);
   const [references, setReferences] = useState<Record<string, { id: string }[]>>({});
@@ -65,8 +67,23 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
   const [aConfirmer, setAConfirmer] = useState<string | null>(null);
   const [depot, setDepot] = useState(false);
   const [passesMateriaux, setPassesMateriaux] = useState(false);
+  // Base stylisée (styles dessinés) : prête ou à générer, et régénération
+  const [baseStylisee, setBaseStylisee] = useState<{ id: string; cout: number; created_at: string } | null>(null);
+  const [baseVersion, setBaseVersion] = useState(0);
+  const [refaireEnCours, setRefaireEnCours] = useState(false);
+  const [paillage, setPaillage] = useState<string>("");
 
   const refsStyle = references[style] ?? [];
+  const cleRefs = refsStyle.map((r) => r.id).sort().join(",");
+
+  useEffect(() => {
+    if (!estDessine(style)) return;
+    let actif = true;
+    fetch(`${base}/base?style=${style}`).then((x) => x.json())
+      .then((r) => { if (actif && r?.ok) setBaseStylisee(r.base); })
+      .catch(() => {});
+    return () => { actif = false; };
+  }, [base, style, cleRefs, baseVersion]);
   // Coût estimé : taille d'envoi au modèle (la vue entière est le cas le plus coûteux), références comprises
   const tailleVue = tailleModele(pdv.largeur_px, pdv.hauteur_px);
   const coutVue = estimerCoutEdition(tailleVue.largeur, tailleVue.hauteur, refsStyle.length);
@@ -116,6 +133,8 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
   // Matériaux visibles dans la vue : une passe chacun avec l'option (coût en plus, au plus une vue entière)
   const nbMateriauxVue = new Set(contexteVue.materiaux.map((m) => m.nom)).size;
   const coutPasses = passesMateriaux ? nbMateriauxVue * estimerCoutEdition(tailleVue.largeur, tailleVue.hauteur, refsStyle.length) : 0;
+  // Styles dessinés : base (une fois, si elle n'est pas prête) + édition masquée (au plus la vue entière)
+  const coutBase = estDessine(style) && !baseStylisee ? coutVue : 0;
 
   const generer = useCallback(async () => {
     setErreur(null);
@@ -129,6 +148,7 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
       const cap = capturer(pdv.largeur_px, pdv.hauteur_px);
       const couchePng = await versPng(cap.couche, cap.largeur, cap.hauteur);
       const cartePng = await versPng(cap.carte, cap.largeur, cap.hauteur);
+      const existantPng = await versPng(cap.existant, cap.largeur, cap.hauteur);
       const masquePng = style === "realiste" ? await versPng(cap.masqueScene, cap.largeur, cap.hauteur) : null;
 
       setEnCours({ style, etape: "envoi", debut });
@@ -142,9 +162,10 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
       const stockage = createClient().storage.from("conception");
       const envoi1 = await stockage.uploadToSignedUrl(prep.couche.path, prep.couche.token, couchePng, { contentType: "image/png" });
       if (envoi1.error) throw new Error(envoi1.error.message);
-      if (prep.carte) {
-        const envoiCarte = await stockage.uploadToSignedUrl(prep.carte.path, prep.carte.token, cartePng, { contentType: "image/png" });
-        if (envoiCarte.error) throw new Error(envoiCarte.error.message);
+      for (const [envoi, png] of [[prep.carte, cartePng], [prep.existant, existantPng]] as const) {
+        if (!envoi) continue;
+        const r = await stockage.uploadToSignedUrl(envoi.path, envoi.token, png, { contentType: "image/png" });
+        if (r.error) throw new Error(r.error.message);
       }
       if (masquePng && prep.masqueScene) {
         const envoi2 = await stockage.uploadToSignedUrl(prep.masqueScene.path, prep.masqueScene.token, masquePng, { contentType: "image/png" });
@@ -163,12 +184,29 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
       }).then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
       if (!res.ok) throw new Error(res.error ?? "La génération a échoué.");
       await charger();
+      setBaseVersion((v) => v + 1);
     } catch (e) {
       setErreur(e instanceof Error ? e.message : "La génération a échoué.");
     } finally {
       setEnCours(null);
     }
   }, [base, captureRef, charger, pdv.largeur_px, pdv.hauteur_px, style, annotations, consignesSup, contexteVue, passesMateriaux, nbMateriauxVue]);
+
+  const refaireBase = useCallback(async () => {
+    if (!estDessine(style)) return;
+    setErreur(null);
+    setRefaireEnCours(true);
+    const r = await fetch(`${base}/base`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ style }) })
+      .then((x) => x.json()).catch(() => ({ ok: false, error: "Le serveur n'a pas répondu." }));
+    setRefaireEnCours(false);
+    if (!r.ok) setErreur(r.error ?? "La base n'a pas pu être générée.");
+    setBaseVersion((v) => v + 1);
+  }, [base, style]);
+
+  // Avertissement : massif sans matériau de sol (la pelouse de la base restera visible)
+  const sansSol = useMemo(() => massifsSansSol(elements.values(), materiaux, donnees.zoneContour), [elements, materiaux, donnees.zoneContour]);
+  const solsDisponibles = useMemo(() => materiaux.filter((m) => m.type === "surface"), [materiaux]);
+  const paillageChoisi = paillage || solsDisponibles.find((m) => /paillage/i.test(m.nom))?.id || solsDisponibles[0]?.id || "";
 
   const deposerReference = useCallback(async (fichier: File) => {
     setErreur(null);
@@ -285,6 +323,46 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
           </p>
         )}
 
+        {estDessine(style) && (
+          <div className="rounded border border-hair-light p-2.5 mb-3" data-testid="bloc-base">
+            <p className="font-medium mb-1">Base stylisée</p>
+            {baseStylisee ? (
+              <div className="flex gap-2 items-start">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`${base}/base?style=${style}&image=1&v=${baseStylisee.id}`} alt="Base stylisée" className="w-24 h-16 object-cover rounded border border-hair-light bg-paper-2" data-testid="base-stylisee" />
+                <div className="text-[0.72rem] text-stone">
+                  <p data-testid="etat-base">Prête : réutilisée pour chaque rendu de cette vue dans ce style.</p>
+                  <button className={`${boutonSecondaire} mt-1`} disabled={occupe || refaireEnCours} onClick={refaireBase} data-testid="btn-refaire-base">
+                    {refaireEnCours ? "Génération…" : `Refaire la base (≈ ${formaterEuros(coutVue)})`}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[0.72rem] text-stone" data-testid="etat-base">
+                La photo est d&apos;abord redessinée dans ce style, sans le projet (≈ {formaterEuros(coutVue)}, une fois), puis le projet y est ajouté dans sa seule zone.
+              </p>
+            )}
+          </div>
+        )}
+
+        {(sansSol.surfaces.length > 0 || sansSol.zoneSeule) && (
+          <div className="rounded border border-brass bg-paper-2 p-2.5 mb-3" role="alert" data-testid="avertissement-massif">
+            <p className="font-medium">Le massif n&apos;a pas de matériau de sol : la pelouse restera visible entre les plantes. Ajouter un paillage ?</p>
+            {sansSol.surfaces.length > 0 && solsDisponibles.length > 0 ? (
+              <div className="flex items-center gap-2 mt-2">
+                <select className="border border-hair-light rounded px-1 py-0.5 bg-white" value={paillageChoisi} onChange={(e) => setPaillage(e.target.value)} data-testid="select-paillage" aria-label="Matériau de sol">
+                  {solsDisponibles.map((m) => <option key={m.id} value={m.id}>{m.nom}</option>)}
+                </select>
+                <button className={boutonSecondaire} disabled={!paillageChoisi} onClick={() => onPoserMateriau(sansSol.surfaces.map((x) => x.id), paillageChoisi)} data-testid="btn-poser-paillage">
+                  Poser sur le massif
+                </button>
+              </div>
+            ) : (
+              <p className="text-[0.72rem] text-stone mt-1">Tracez la surface du massif à l&apos;étape 3, puis choisissez son matériau.</p>
+            )}
+          </div>
+        )}
+
         {nbMateriauxVue > 0 && (
           <label className="flex items-start gap-2 mb-3">
             <input type="checkbox" className="mt-0.5" checked={passesMateriaux} disabled={occupe} onChange={(e) => setPassesMateriaux(e.target.checked)} data-testid="option-passes" />
@@ -297,7 +375,7 @@ export function PanneauRenduIA({ pdv, captureRef, donnees, elements, materiaux, 
 
         <div className="flex items-center gap-3">
           <button className={bouton} disabled={occupe || depot} onClick={generer} data-testid="btn-generer">Générer</button>
-          <span className="text-stone" data-testid="cout-estime">{style === "realiste" || passesMateriaux ? "Jusqu'à " : "≈ "}{formaterEuros(coutVue + coutPasses)}</span>
+          <span className="text-stone" data-testid="cout-estime">Jusqu&apos;à {formaterEuros(coutBase + coutVue + coutPasses)}</span>
         </div>
         {estDessine(style) && <p className="text-brass mt-1" data-testid="mention-dessin-ia">{MENTION_DESSIN_IA}</p>}
 

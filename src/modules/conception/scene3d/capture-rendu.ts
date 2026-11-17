@@ -26,6 +26,8 @@ export interface CouchesCapturees {
   masqueScene: Uint8ClampedArray;
   /** RGBA, couleur de carte de chaque matériau, noir ailleurs. */
   carte: Uint8ClampedArray;
+  /** RGBA, blanc = emprise de l'existant (volumes et disques au sol), noir ailleurs. */
+  existant: Uint8ClampedArray;
 }
 
 export type CaptureurRendu = (largeur: number, hauteur: number) => CouchesCapturees;
@@ -98,6 +100,8 @@ export function capturerCouches(params: {
   altitudeEn: (x: number, y: number) => number;
   /** Couleur de carte de chaque matériau (id → « #RRGGBB »). */
   couleursCarte?: Map<string, string>;
+  /** Existant : disques au sol (centre plan, rayon), dessinés avec les volumes dans la passe « existant ». */
+  disquesExistant?: { centre: Pt; rayon: number }[];
 }): CouchesCapturees {
   const { gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn } = params;
   const couleursCarte = params.couleursCarte ?? new Map<string, string>();
@@ -121,6 +125,7 @@ export function capturerCouches(params: {
   rtCouche.texture.colorSpace = THREE.SRGBColorSpace;
   const rtMasque = new THREE.WebGLRenderTarget(largeur, hauteur);
   const rtCarte = new THREE.WebGLRenderTarget(largeur, hauteur);
+  const rtExistant = new THREE.WebGLRenderTarget(largeur, hauteur);
 
   const materiauxOrigine = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   const materiauxTemp: THREE.Material[] = [];
@@ -228,7 +233,45 @@ export function capturerCouches(params: {
     gl.outputColorSpace = ancienEspace;
     const carte = lirePixels(gl, rtCarte, largeur, hauteur);
 
-    return { largeur, hauteur, couche, masqueScene, carte };
+    // 4. Existant : volumes et disques au sol en blanc, occultés par le terrain et les bâtiments ;
+    //    végétaux et matériaux du projet masqués (le masque garde ce qui est devant l'existant)
+    for (const [mesh, mat] of materiauxOrigine) mesh.material = mat;
+    materiauxOrigine.clear();
+    const blancExistant = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    materiauxTemp.push(blancExistant);
+    const caches: THREE.Object3D[] = [];
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mat = mesh.material as THREE.Material;
+      if (mesh.userData?.masquant) {
+        materiauxOrigine.set(mesh, mesh.material);
+        mesh.material = blancExistant;
+      } else if (typeof mesh.userData?.vegetalId === "string" || mesh.userData?.materiau3D) {
+        if (mesh.visible) { mesh.visible = false; caches.push(mesh); }
+      } else if (mat?.type === "ShadowMaterial") {
+        materiauxOrigine.set(mesh, mesh.material);
+        mesh.material = profondeurSeule;
+      }
+    });
+    const disques = (params.disquesExistant ?? []).map((d) => Array.from({ length: 48 }, (_, i) => {
+      const a = (2 * Math.PI * i) / 48;
+      return [d.centre[0] + d.rayon * Math.cos(a), d.centre[1] + d.rayon * Math.sin(a)] as Pt;
+    }));
+    let disquesMesh: THREE.Mesh | null = null;
+    if (disques.length > 0) {
+      disquesMesh = new THREE.Mesh(geometrieMassif(disques, altitudeEn), blancExistant);
+      scene.add(disquesMesh);
+    }
+    gl.setRenderTarget(rtExistant);
+    gl.setClearColor(0x000000, 1);
+    gl.clear();
+    gl.render(scene, camera);
+    const existant = lirePixels(gl, rtExistant, largeur, hauteur);
+    if (disquesMesh) { scene.remove(disquesMesh); disquesMesh.geometry.dispose(); }
+    for (const o of caches) o.visible = true;
+
+    return { largeur, hauteur, couche, masqueScene, carte, existant };
   } finally {
     for (const [mesh, mat] of materiauxOrigine) mesh.material = mat;
     if (massif) { scene.remove(massif); massif.geometry.dispose(); }
@@ -238,6 +281,7 @@ export function capturerCouches(params: {
     rtCouche.dispose();
     rtMasque.dispose();
     rtCarte.dispose();
+    rtExistant.dispose();
     gl.setRenderTarget(cibleInitiale);
     gl.setClearColor(couleurFond, alphaFond);
   }

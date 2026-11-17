@@ -287,3 +287,27 @@ export function decrireMateriaux(elements: Iterable<Element>, materiaux: Materia
   }
   return sortie;
 }
+
+/**
+ * Massifs sans matériau de sol : surfaces (sol, minéral) qui portent des plantes du projet
+ * mais aucun matériau de surface. `zoneSeule` : des plantes de la zone active ne sont sur
+ * aucune surface tracée (il faut tracer la surface du massif pour lui donner un sol).
+ */
+export function massifsSansSol(elements: Iterable<Element>, materiaux: Materiau[], zone: Pt[] | null = null): { surfaces: Element[]; zoneSeule: boolean } {
+  const parId = new Map(materiaux.map((m) => [m.id, m]));
+  const liste = [...elements].filter((e) => e.statut !== "supprime");
+  const plantes = liste
+    .filter((e) => e.type === "vegetal" && e.statut !== "existant" && e.geometrie.type === "point")
+    .map((e) => (e.geometrie as { position: Pt }).position);
+  const surfaces = liste.filter((e) => (e.type === "sol" || e.type === "mineral") && contourFerme(e));
+  const dans = (p: Pt, c: Pt[]) => {
+    let d = false;
+    for (let i = 0, j = c.length - 1; i < c.length; j = i++) {
+      if ((c[i][1] > p[1]) !== (c[j][1] > p[1]) && p[0] < ((c[j][0] - c[i][0]) * (p[1] - c[i][1])) / (c[j][1] - c[i][1]) + c[i][0]) d = !d;
+    }
+    return d;
+  };
+  const sansSol = surfaces.filter((s) => materiauDe(s, parId)?.type !== "surface" && plantes.some((p) => dans(p, contourFerme(s)!)));
+  const zoneSeule = !!zone && plantes.some((p) => dans(p, zone) && !surfaces.some((s) => dans(p, contourFerme(s)!)));
+  return { surfaces: sansSol, zoneSeule };
+}

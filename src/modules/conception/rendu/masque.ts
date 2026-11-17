@@ -145,3 +145,34 @@ export function masquePourApi(m: Masque): ImageRGBA {
   }
   return { largeur: m.largeur, hauteur: m.hauteur, donnees };
 }
+
+/**
+ * Retire l'emprise de l'existant (volumes et disque au sol, en blanc dans `existant`) d'un
+ * masque élargi, sauf là où le projet est réellement visible (masque brut) : rien n'est
+ * ajouté au pied de l'existant, mais une plante placée devant lui reste dans le masque.
+ */
+export function exclureExistant(masque: Masque, brut: Masque, existant: Masque | null): Masque {
+  if (!existant) return masque;
+  const out = creerMasque(masque.largeur, masque.hauteur);
+  for (let i = 0; i < out.valeurs.length; i++) {
+    out.valeurs[i] = existant.valeurs[i] > 127 && brut.valeurs[i] <= 127 ? 0 : masque.valeurs[i];
+  }
+  return out;
+}
+
+/** Brut du projet pour les styles dessinés : pixels de la couche 3D (plantes, ombres, matériaux). */
+export function brutProjet(couche: ImageRGBA, seuilAlpha = 6): Masque {
+  const m = creerMasque(couche.largeur, couche.hauteur);
+  for (let i = 0; i < m.valeurs.length; i++) if (couche.donnees[i * 4 + 3] > seuilAlpha) m.valeurs[i] = 255;
+  return m;
+}
+
+/**
+ * Masque d'édition des styles dessinés : union stricte du projet (plantes avec leurs
+ * ombres, surfaces de matériaux, bandes de bordures), élargie de 15 px avec un bord adouci
+ * de 8 px, moins l'emprise de l'existant.
+ */
+export function masqueDessine(couche: ImageRGBA, existant: Masque | null, elargissement = 15, transition = 8): Masque {
+  const brut = brutProjet(couche);
+  return exclureExistant(masqueFinal(brut, elargissement, transition), brut, existant);
+}

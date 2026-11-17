@@ -9,7 +9,7 @@ import {
   extraireRect, extraireRectMasque, superposer,
   type ImageRGBA, type Masque, type Rect,
 } from "./image";
-import { boiteEnglobante, fusionnerMasqueBrut, masqueFinal, masquePourApi } from "./masque";
+import { boiteEnglobante, exclureExistant, fusionnerMasqueBrut, masqueDessine, masqueFinal, masquePourApi } from "./masque";
 import { recadrageAutour, tailleModele } from "./recadrage";
 import { recoller } from "./recollage";
 import { filtreDessin } from "./filtre-dessin";
@@ -100,15 +100,16 @@ export async function rendreRealiste(params: {
   editer: Editeur;
   consigne: string;
   references?: Buffer[];
-  /** Carte des matériaux (même cadrage que la photo), envoyée juste après la scène. */
-  carte?: ImageRGBA | null;
+  /** Emprise de l'existant (volumes et disques au sol) : exclue du masque. */
+  existant?: Masque | null;
 }): Promise<ResultatRendu> {
   const { photo, editer } = params;
   const couche = await alignerSurPhoto(photo, params.couche);
   const masqueScene = await redimensionnerMasque(params.masqueScene, photo.largeur, photo.hauteur);
-  const carte = params.carte ? await redimensionner(params.carte, photo.largeur, photo.hauteur) : null;
+  const existant = params.existant ? await redimensionnerMasque(params.existant, photo.largeur, photo.hauteur) : null;
 
-  const masque = masqueFinal(fusionnerMasqueBrut(masqueScene, couche));
+  const brut = fusionnerMasqueBrut(masqueScene, couche);
+  const masque = exclureExistant(masqueFinal(brut), brut, existant);
   const boite = boiteEnglobante(masque);
   if (!boite) throw new Error("Aucun végétal ni massif visible dans cette vue.");
 
@@ -119,12 +120,10 @@ export async function rendreRealiste(params: {
   const imageEnvoi = await redimensionner(extraireRect(vue, rect), taille.largeur, taille.hauteur);
   const masqueEnvoi = await redimensionnerMasque(extraireRectMasque(masque, rect), taille.largeur, taille.hauteur);
 
-  // Carte recadrée comme la scène : mêmes pixels, même cadrage
-  const carteEnvoi = carte ? [await encoderPng(await redimensionner(extraireRect(carte, rect), taille.largeur, taille.hauteur))] : [];
   const reponse = await editer(params.consigne, await encoderPng(imageEnvoi), {
     masquePng: await encoderPng(masquePourApi(masqueEnvoi)),
     taille: `${taille.largeur}x${taille.hauteur}`,
-    references: [...carteEnvoi, ...(params.references ?? [])],
+    references: params.references,
   });
 
   const resultat = await redimensionner(await decoder(reponse.buffer), rect.largeur, rect.hauteur);
@@ -139,17 +138,16 @@ export async function rendreDessinFiltre(params: { photo: ImageRGBA; couche: Ima
 
 /** Style dessiné (croquis, aquarelle, feutres) : stylisation de toute la vue, éléments et positions conservés. */
 export async function rendreDessinIA(params: {
-  photo: ImageRGBA; couche: ImageRGBA; editer: Editeur; consigne: string; references?: Buffer[]; carte?: ImageRGBA | null;
+  photo: ImageRGBA; couche: ImageRGBA; editer: Editeur; consigne: string; references?: Buffer[];
 }): Promise<ResultatRendu> {
   const { photo, editer } = params;
   const couche = await alignerSurPhoto(photo, params.couche);
   const vue = superposer(photo, couche);
   const taille = tailleModele(photo.largeur, photo.hauteur);
   const envoi = await redimensionner(vue, taille.largeur, taille.hauteur);
-  const carteEnvoi = params.carte ? [await encoderPng(await redimensionner(params.carte, taille.largeur, taille.hauteur))] : [];
   const reponse = await editer(params.consigne, await encoderPng(envoi), {
     taille: `${taille.largeur}x${taille.hauteur}`,
-    references: [...carteEnvoi, ...(params.references ?? [])],
+    references: params.references,
   });
   const image = await redimensionner(await decoder(reponse.buffer), photo.largeur, photo.hauteur);
   return { image, masque: null, usage: reponse.usage, taille };
@@ -189,4 +187,53 @@ export async function passesParMateriau(params: {
     image = recoller(image, resultat, rect, masque);
   }
   return { image, usages };
+}
+
+/**
+ * Base stylisée : la photo d'origine seule (sans le projet) redessinée dans le style, avec
+ * les références de style, à la taille de la photo. Générée une fois, puis réutilisée.
+ */
+export async function genererBase(params: { photo: ImageRGBA; editer: Editeur; consigne: string; references?: Buffer[] }): Promise<{ image: ImageRGBA; usage: UsageModele }> {
+  const { photo } = params;
+  const taille = tailleModele(photo.largeur, photo.hauteur);
+  const envoi = await redimensionner(photo, taille.largeur, taille.hauteur);
+  const reponse = await params.editer(params.consigne, await encoderPng(envoi), {
+    taille: `${taille.largeur}x${taille.hauteur}`,
+    references: params.references,
+  });
+  return { image: await redimensionner(await decoder(reponse.buffer), photo.largeur, photo.hauteur), usage: reponse.usage };
+}
+
+/**
+ * Projet ajouté sur la base stylisée par une édition masquée : la couche 3D (plantes et
+ * matériaux) est superposée à la base dans le masque, la zone est redessinée dans le style
+ * de la base, puis recollée : hors du masque, chaque pixel est celui de la base.
+ */
+export async function rendreSurBase(params: {
+  base: ImageRGBA;
+  couche: ImageRGBA;
+  existant: Masque | null;
+  editer: Editeur;
+  consigne: string;
+  references?: Buffer[];
+}): Promise<ResultatRendu> {
+  const { base, editer } = params;
+  const couche = await alignerSurPhoto(base, params.couche);
+  const existant = params.existant ? await redimensionnerMasque(params.existant, base.largeur, base.hauteur) : null;
+  const masque = masqueDessine(couche, existant);
+  const boite = boiteEnglobante(masque);
+  if (!boite) throw new Error("Aucun végétal ni matériau visible dans cette vue.");
+
+  const rect = recadrageAutour(boite, base.largeur, base.hauteur);
+  const taille = tailleModele(rect.largeur, rect.hauteur);
+  const vue = superposer(base, couche);
+  const imageEnvoi = await redimensionner(extraireRect(vue, rect), taille.largeur, taille.hauteur);
+  const masqueEnvoi = await redimensionnerMasque(extraireRectMasque(masque, rect), taille.largeur, taille.hauteur);
+  const reponse = await editer(params.consigne, await encoderPng(imageEnvoi), {
+    masquePng: await encoderPng(masquePourApi(masqueEnvoi)),
+    taille: `${taille.largeur}x${taille.hauteur}`,
+    references: params.references,
+  });
+  const resultat = await redimensionner(await decoder(reponse.buffer), rect.largeur, rect.hauteur);
+  return { image: recoller(base, resultat, rect, masque), masque, usage: reponse.usage, rect, taille };
 }

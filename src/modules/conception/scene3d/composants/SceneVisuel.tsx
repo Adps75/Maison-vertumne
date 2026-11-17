@@ -404,9 +404,13 @@ function EnregistreurCapture({
       ...donnees.contoursMateriaux,
     ];
     captureRef.current = (largeur, hauteur) =>
-      capturerCouches({ gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn, couleursCarte: new Map(Object.entries(donnees.couleursCarte)) });
+      capturerCouches({
+        gl, scene, camera, largeur, hauteur, contoursMassif, altitudeEn,
+        couleursCarte: new Map(Object.entries(donnees.couleursCarte)),
+        disquesExistant: donnees.masquants.map((m) => ({ centre: m.position, rayon: m.diametre_m / 2 })),
+      });
     return () => { captureRef.current = null; };
-  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, donnees.contoursMateriaux, donnees.couleursCarte, altitudeEn]);
+  }, [captureRef, gl, scene, camera, donnees.zoneContour, donnees.surfaces, donnees.contoursMateriaux, donnees.couleursCarte, donnees.masquants, altitudeEn]);
 
   return null;
 }

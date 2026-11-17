@@ -29,6 +29,9 @@ const MASSIF_ID = crypto.randomUUID();
 const GAZON_ID = crypto.randomUUID();
 const VOLIGE_ID = crypto.randomUUID();
 const RECT_ID = crypto.randomUUID();
+const IF_ID = crypto.randomUUID();
+/** If existant (cône de 2 m, Ø 1 m) devant le massif, à gauche : son pied ne doit rien recevoir. */
+let ifPied: [number, number] = [0, 0];
 const VOLIGE5_ID = crypto.randomUUID();
 let gazonCentre: [number, number] = [0, 0];
 /** Point du massif (paillage) à 1 m du centre, à côté de la plante. */
@@ -149,6 +152,7 @@ async function generer(page: Page, style: string) {
 interface RenduApi {
   id: string; style: string; cout: number; masque_path: string | null; carte_path: string | null;
   consigne: string; consigne_style: string; references_utilisees: { id: string }[]; consignes_sup: string | null; annotations: boolean;
+  base_id: string | null;
 }
 async function listeRendus(page: Page, vue = pdvId): Promise<RenduApi[]> {
   const r = await page.request.get(`/api/conception/projets/${projetId}/points-de-vue/${vue}/rendus`);
@@ -206,6 +210,7 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     // rectangle de 10 × 4 m sans matériau (outils BOR et DEC)
     gazonCentre = pt(7, 3.2);
     massifTemoin = pt(7, 1);
+    ifPied = pt(6.2, -3.2);
     volige5 = { a: pt(5, -2.5), b: pt(5, 2.5), milieu: pt(5, 0), pelouse: pt(5, 4) };
     const g = 0.75;
     const res = await page.request.patch(`/api/conception/projets/${projetId}/elements`, {
@@ -219,6 +224,9 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
             geometrie: { type: "polyligne", points: [pt(-9, -4), pt(-9, 3.5), pt(-14, 3.5)] } },
           { id: VOLIGE5_ID, type: "limite", calque: "sols", statut: "nouveau", hauteur: null, ordre: 4, proprietes: { materiau_id: id("Volige acier") },
             geometrie: { type: "polyligne", points: [volige5.a, volige5.b] } },
+          { id: IF_ID, type: "vegetal", calque: "existant", statut: "existant", hauteur: 2, ordre: 6,
+            geometrie: { type: "point", position: ifPied },
+            proprietes: { nom_commun: "If (test)", nom_latin: "Taxus baccata", diametre_m: 1, hauteur_m: 2, categorie: "arbuste", forme: null, forme_existant: "cone", existant_analyse: true } },
           { id: RECT_ID, type: "sol", calque: "sols", statut: "nouveau", hauteur: null, ordre: 5, proprietes: {},
             geometrie: { type: "rectangle", points: [pt(-2, -5), pt(-2, 5), pt(-6, 5), pt(-6, -5)] } },
         ],
@@ -352,6 +360,8 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     await expect(page.locator("[data-testid='cout-estime']")).toContainText("€");
     await expect(page.locator("[data-testid='mention-dessin-ia']")).toHaveText("L'IA peut modifier certains détails");
     await expect(page.locator("[data-testid='materiaux-rendu']")).toContainText("Gazon (rénovation)");
+    await expect(page.locator("[data-testid='avertissement-massif']")).toHaveCount(0); // massif en paillage
+    await expect(page.locator("[data-testid='bloc-base']")).toBeVisible();
     await page.screenshot({ path: "e2e/screenshots/rendu-styles.png" });
 
     await page.locator("[data-testid='style-realiste'] input").check();
@@ -400,10 +410,9 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     const rendu = (await listeRendus(page)).find((r) => r.style === "realiste")!;
     expect(rendu.masque_path).toBeTruthy();
     // La carte des matériaux accompagne la photo : légende des matériaux de la vue, aucune position en mots
-    expect(rendu.consigne).toMatch(/SECOND image is a MATERIAL MAP/);
-    expect(rendu.consigne).toMatch(/= Gazon \(rénovation\) :/);
-    expect(rendu.consigne).toMatch(/= Paillage écorce de pin :/);
-    expect(rendu.consigne).toMatch(/= Volige acier :/);
+    // La carte n'est jamais envoyée : aucune légende de couleurs ; matériaux nommés, sans position
+    expect(rendu.consigne).not.toMatch(/MATERIAL MAP|red =|magenta/);
+    expect(rendu.consigne).toContain("Gazon (rénovation)");
     expect(rendu.consigne).not.toMatch(/devant le massif|à droite du massif/);
     expect(rendu.carte_path).toBeTruthy();
 
@@ -460,10 +469,67 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     expect([photo.largeur, photo.hauteur, image.largeur, image.hauteur, masque.largeur, masque.hauteur]).toEqual([PHOTO.l, PHOTO.h, PHOTO.l, PHOTO.h, PHOTO.l, PHOTO.h]);
     expect(masque.data[py * masque.largeur + px], "pied de la plante dans le masque").toBe(255);
     expect(masque.data[gy * masque.largeur + gx], "gazon rénové (hors du massif) dans le masque").toBe(255);
+    const [fx, fy] = await pixelPhoto(page, ifPied);
+    expect(masque.data[fy * masque.largeur + fx], "pied de l'if existant : hors du masque").toBe(0);
     expect(masque.data[5 * masque.largeur + Math.round(masque.largeur / 2)], "ciel hors du masque").toBe(0);
     expect(hors).toBeGreaterThan(PHOTO.l * PHOTO.h / 3);
     expect(horsIdentiques).toBe(hors);
     expect(dedansModifies / dedans).toBeGreaterThan(0.9);
+  });
+
+  test("styles dessinés : base stylisée réutilisée, projet ajouté dans son masque, hors masque = base", async ({ page }) => {
+    await ouvrirVisuel(page);
+    await ouvrirPanneau(page);
+    await page.locator("[data-testid='style-feutres'] input").check();
+    await expect(page.locator("[data-testid='etat-base']")).toContainText("redessinée dans ce style");
+    await generer(page, "feutres");
+    await expect(page.locator("[data-testid='base-stylisee']")).toBeVisible({ timeout: 10000 });
+    await generer(page, "feutres");
+    const feutres = (await listeRendus(page)).filter((r) => r.style === "feutres");
+    expect(feutres.length).toBe(2);
+    // Une seule base pour les deux rendus ; le second ne la paie pas
+    expect(feutres[0].base_id).toBeTruthy();
+    expect(feutres[0].base_id).toBe(feutres[1].base_id);
+    expect(Number(feutres[0].cout)).toBeLessThan(Number(feutres[1].cout)); // liste du plus récent au plus ancien
+    const statut = await (await page.request.get(`/api/conception/projets/${projetId}/points-de-vue/${pdvId}/rendus/base?style=feutres`)).json();
+    expect(statut.base.id).toBe(feutres[0].base_id);
+
+    // Hors du masque : chaque pixel est celui de la base ; pied de l'if hors du masque ; plante dedans
+    const base = `/api/conception/projets/${projetId}/points-de-vue/${pdvId}`;
+    const brut = async (url: string, canaux: 1 | 4) => {
+      const reponse = await page.request.get(url);
+      expect(reponse.ok(), url).toBe(true);
+      const buf = Buffer.from(await reponse.body());
+      const img = canaux === 4 ? sharp(buf).ensureAlpha() : sharp(buf).extractChannel(0);
+      const { data, info } = await img.raw().toBuffer({ resolveWithObject: true });
+      return { data, buf, largeur: info.width, hauteur: info.height };
+    };
+    const id = feutres[0].id;
+    const [imgBase, imgFinal, masque] = await Promise.all([
+      brut(`${base}/rendus/${id}/image?type=base`, 4), brut(`${base}/rendus/${id}/image`, 4), brut(`${base}/rendus/${id}/image?type=masque`, 1),
+    ]);
+    let hors = 0, horsDifferents = 0;
+    for (let i = 0; i < masque.data.length; i++) {
+      if (masque.data[i] !== 0) continue;
+      hors++;
+      const j = i * 4;
+      if (imgBase.data[j] !== imgFinal.data[j] || imgBase.data[j + 1] !== imgFinal.data[j + 1] || imgBase.data[j + 2] !== imgFinal.data[j + 2]) horsDifferents++;
+    }
+    expect(hors).toBeGreaterThan(PHOTO.l * PHOTO.h / 3);
+    expect(horsDifferents, "pixels hors masque différents de la base").toBe(0);
+    const [fx, fy] = await pixelPhoto(page, ifPied);
+    expect(masque.data[fy * masque.largeur + fx], "pied de l'if existant").toBe(0);
+    const [mx, my] = await pixelPhoto(page, massifTemoin);
+    expect(masque.data[my * masque.largeur + mx], "paillage du massif").toBe(255);
+    fs.writeFileSync("e2e/screenshots/dessin-base.png", imgBase.buf);
+    fs.writeFileSync("e2e/screenshots/dessin-masque.png", masque.buf);
+    fs.writeFileSync("e2e/screenshots/dessin-final.png", imgFinal.buf);
+
+    // « Refaire la base » : nouvelle base
+    await page.locator("[data-testid='btn-refaire-base']").click();
+    await expect.poll(async () => (await (await page.request.get(`${base}/rendus/base?style=feutres`)).json()).base?.id, { timeout: 60_000 })
+      .not.toBe(feutres[0].base_id);
+    await page.screenshot({ path: "e2e/screenshots/dessin-panneau.png" });
   });
 
   test("même style sur deux vues : même consigne de style, mêmes références (déposées dans le panneau)", async ({ page }) => {
@@ -505,7 +571,11 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     expect(r1.consigne_style).toBe(r2.consigne_style);
     expect(r1.references_utilisees.map((r) => r.id)).toEqual(refs);
     expect(r2.references_utilisees.map((r) => r.id)).toEqual(refs);
-    expect(r1.consigne.startsWith(r1.consigne_style)).toBe(true);
+    // Styles dessinés : la consigne enregistrée est celle de l'édition masquée sur la base
+    expect(r1.consigne).toMatch(/Edit ONLY the transparent area/);
+    expect(r1.base_id).toBeTruthy();
+    expect(r2.base_id).toBeTruthy();
+    expect(r1.base_id).not.toBe(r2.base_id); // une base par vue
     expect(r1.consigne_style).toMatch(/landscape architect's sketch/);
     expect(r1.consigne_style).toMatch(/STYLE REFERENCES? ONLY/);
     // Le fournisseur simulé a reçu les références (jetons d'image en plus)
@@ -523,7 +593,8 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     await ouvrirVisuel(page);
     await ouvrirPanneau(page);
     const cartes = page.locator("[data-testid^='rendu-']");
-    await expect(cartes).toHaveCount(2, { timeout: 10000 });
+    await expect(cartes.first()).toBeVisible({ timeout: 10000 });
+    const nb = await cartes.count();
 
     const [telechargement] = await Promise.all([
       page.waitForEvent("download", { timeout: 15000 }),
@@ -542,7 +613,7 @@ test.describe.serial("Rendu IA des vues (fournisseur simulé)", () => {
     await supprimer.click();
     await expect(supprimer).toHaveText("Confirmer la suppression");
     await supprimer.click();
-    await expect(cartes).toHaveCount(1, { timeout: 10000 });
-    expect((await listeRendus(page)).length).toBe(1);
+    await expect(cartes).toHaveCount(nb - 1, { timeout: 10000 });
+    expect((await listeRendus(page)).length).toBe(nb - 1);
   });
 });
